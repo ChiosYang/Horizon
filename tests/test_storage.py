@@ -169,20 +169,3 @@ def test_save_daily_summary_replace_failure_preserves_destination(tmp_path, monk
 
     assert destination.read_text(encoding="utf-8") == "existing"
     assert list(destination.parent.glob(f".{destination.name}.*.tmp")) == []
-
-
-def test_save_subscribers_replace_failure_preserves_destination(tmp_path, monkeypatch):
-    storage = StorageManager(data_dir=str(tmp_path))
-
-    def fail_replace(source, target):
-        raise OSError("replace failed")
-
-    monkeypatch.setattr(file_utils.os, "replace", fail_replace)
-
-    subscribers_path = tmp_path / "subscribers.json"
-    subscribers_path.write_text('["old"]', encoding="utf-8")
-    with pytest.raises(OSError, match="replace failed"):
-        storage._save_subscribers(["new"])
-
-    assert subscribers_path.read_text(encoding="utf-8") == '["old"]'
-    assert list(tmp_path.glob(f".{subscribers_path.name}.*.tmp")) == []

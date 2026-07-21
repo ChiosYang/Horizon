@@ -110,6 +110,12 @@
         "url": "https://huggingface.co/blog/feed.xml",
         "enabled": true,
         "category": "ai-tools"
+      },
+      {
+        "name": "GitHub Trending - Daily",
+        "url": "https://mshibanami.github.io/GitHubTrendingRSS/daily/all.xml",
+        "enabled": true,
+        "category": "github-trending"
       }
     ],
     "reddit": {
@@ -144,31 +150,10 @@
           "fetch_limit": 20
         }
       ]
-    },
-    "ossinsight": {
-      "enabled": true,
-      "period": "past_24_hours",
-      "languages": [
-        "All",
-        "Python",
-        "TypeScript"
-      ],
-      "keywords": [
-        "llm",
-        "agent",
-        "rag",
-        "inference",
-        "transformer",
-        "embedding",
-        "diffusion",
-        "multimodal",
-        "machine learning",
-        "deep learning"
-      ],
-      "min_stars": 2,
-      "max_items": 10,
-      "category": "ai-oss"
     }
+  },
+  "github_pages": {
+    "enabled": true
   },
   "filtering": {
     "ai_score_threshold": 8.0,
@@ -181,7 +166,6 @@
     "overview_position": "last",
     "platform": "feishu",
     "layout": "collapsible",
-    "fallback_layout": "markdown",
     "languages": [
       "zh"
     ],

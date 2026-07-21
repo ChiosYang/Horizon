@@ -9,7 +9,6 @@ from bs4 import BeautifulSoup
 from src.models import (
     GitHubSourceConfig,
     HackerNewsConfig,
-    OSSInsightConfig,
     RedditSubredditConfig,
     RedditUserConfig,
     TelegramChannelConfig,
@@ -18,7 +17,6 @@ from src.models import (
 )
 from src.scrapers.github import GitHubScraper
 from src.scrapers.hackernews import HackerNewsScraper
-from src.scrapers.ossinsight import OSSInsightScraper
 from src.scrapers.reddit import RedditScraper
 from src.scrapers.telegram import TelegramScraper
 from src.scrapers.twitter import TwitterScraper
@@ -260,43 +258,6 @@ def test_telegram_parse_channel_html_passes_category():
     items = scraper._parse_channel_html(_TELEGRAM_MSG_HTML, cfg, _SINCE)
     assert len(items) == 1
     assert items[0].metadata["category"] == "ai-news"
-
-
-# ---------------------------------------------------------------------------
-# OSSInsight
-# ---------------------------------------------------------------------------
-
-
-def test_ossinsight_row_to_item_category_in_metadata():
-    cfg = OSSInsightConfig(enabled=True, category="oss-trending")
-    scraper = OSSInsightScraper(cfg, AsyncMock())
-    row = {
-        "repo_name": "owner/repo",
-        "repo_id": 123,
-        "stars": 50,
-        "forks": 10,
-        "pushes": 5,
-        "pull_requests": 3,
-    }
-    item = scraper._row_to_item(row, "Python")
-    assert item is not None
-    assert item.metadata["category"] == "oss-trending"
-
-
-def test_ossinsight_row_to_item_category_none_when_unset():
-    cfg = OSSInsightConfig(enabled=True)
-    scraper = OSSInsightScraper(cfg, AsyncMock())
-    row = {
-        "repo_name": "owner/repo",
-        "repo_id": 456,
-        "stars": 20,
-        "forks": 5,
-        "pushes": 2,
-        "pull_requests": 1,
-    }
-    item = scraper._row_to_item(row, "Go")
-    assert item is not None
-    assert item.metadata["category"] is None
 
 
 # ---------------------------------------------------------------------------

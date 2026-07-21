@@ -4,6 +4,7 @@ import asyncio
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Dict, List, Literal, Optional
 from urllib.parse import unquote_plus, urlsplit
 import httpx
@@ -21,8 +22,6 @@ from .scrapers.telegram import TelegramScraper
 from .scrapers.twitter import TwitterScraper
 from .scrapers.twitter_playwright import TwitterPlaywrightScraper
 from .scrapers.openbb import OpenBBScraper
-from .scrapers.ossinsight import OSSInsightScraper
-from .scrapers.gdelt import GDELTScraper
 from .scrapers.google_news import GoogleNewsScraper
 from .ai.client import create_ai_client
 from .ai.analyzer import ContentAnalyzer
@@ -190,16 +189,6 @@ class HorizonOrchestrator:
         """
         self.console.print("[bold cyan]🌅 Horizon - Starting aggregation...[/bold cyan]\n")
 
-        # Check email subscriptions if configured
-        if (
-            self.email_manager
-            and self.config.email
-            and self.config.email.enabled
-            and self.config.email.imap_enabled
-        ):
-            self.console.print("📧 Checking for new email subscriptions...")
-            self.email_manager.check_subscriptions(self.storage)
-
         try:
             # 1. Determine time window
             since = self._determine_time_window(force_hours)
@@ -263,47 +252,26 @@ class HorizonOrchestrator:
                 summary_path = self.storage.save_daily_summary(today, summary, language=lang)
                 self.console.print(f"💾 Saved {lang.upper()} summary to: {summary_path}\n")
 
-                # Copy to docs/ for GitHub Pages
+                # Copy to docs/ only when GitHub Pages publishing is enabled.
                 try:
-                    from pathlib import Path
-
-                    post_filename = f"{today}-summary-{lang}.md"
-                    posts_dir = Path("docs/_posts")
-                    posts_dir.mkdir(parents=True, exist_ok=True)
-
-                    dest_path = safe_output_path(posts_dir, post_filename)
-
-                    # Add Jekyll front matter
-                    front_matter = (
-                        "---\n"
-                        "layout: default\n"
-                        f"title: \"Horizon Summary: {today} ({lang.upper()})\"\n"
-                        f"date: {today}\n"
-                        f"lang: {lang}\n"
-                        "---\n\n"
+                    dest_path = self._publish_github_pages_summary(
+                        summary=summary,
+                        date=today,
+                        language=lang,
                     )
-
-                    # Strip leading H1 header to avoid duplication with Jekyll title
-                    summary_content = summary
-                    first_line = summary_content.strip().split("\n")[0]
-                    if first_line.startswith("# "):
-                        parts = summary_content.split("\n", 1)
-                        if len(parts) > 1:
-                            summary_content = parts[1].strip()
-
-                    with open(dest_path, "w", encoding="utf-8") as f:
-                        f.write(front_matter + summary_content)
-
-                    self.console.print(f"📄 Copied {lang.upper()} summary to GitHub Pages: {dest_path}\n")
+                    if dest_path is not None:
+                        self.console.print(
+                            f"📄 Copied {lang.upper()} summary to GitHub Pages: "
+                            f"{dest_path}\n"
+                        )
                 except Exception as e:
                     self.console.print(f"[yellow]⚠️  Failed to copy {lang.upper()} summary to docs/: {e}[/yellow]\n")
 
                 # Send email if configured
                 if self.email_manager and self.config.email and self.config.email.enabled:
                     self.console.print(f"📧 Sending {lang.upper()} email summary...")
-                    subscribers = self.storage.load_subscribers()
                     subject = f"Horizon Summary ({lang.upper()}) - {today}"
-                    self.email_manager.send_daily_summary(summary, subject, subscribers)
+                    self.email_manager.send_daily_summary(summary, subject)
 
                 # Send webhook notification if configured
                 if self.webhook_notifier:
@@ -351,6 +319,41 @@ class HorizonOrchestrator:
             hours = self.config.filtering.time_window_hours
             since = datetime.now(timezone.utc) - timedelta(hours=hours)
         return since
+
+    def _publish_github_pages_summary(
+        self,
+        *,
+        summary: str,
+        date: str,
+        language: str,
+    ) -> Optional[Path]:
+        """Write a Jekyll post when GitHub Pages publishing is enabled."""
+        if not self.config.github_pages.enabled:
+            return None
+
+        post_filename = f"{date}-summary-{language}.md"
+        posts_dir = Path("docs/_posts")
+        posts_dir.mkdir(parents=True, exist_ok=True)
+        dest_path = safe_output_path(posts_dir, post_filename)
+
+        front_matter = (
+            "---\n"
+            "layout: default\n"
+            f"title: \"Horizon Summary: {date} ({language.upper()})\"\n"
+            f"date: {date}\n"
+            f"lang: {language}\n"
+            "---\n\n"
+        )
+
+        summary_content = summary
+        first_line = summary_content.strip().split("\n")[0]
+        if first_line.startswith("# "):
+            parts = summary_content.split("\n", 1)
+            if len(parts) > 1:
+                summary_content = parts[1].strip()
+
+        dest_path.write_text(front_matter + summary_content, encoding="utf-8")
+        return dest_path
 
     async def fetch_all_sources(self, since: datetime) -> List[ContentItem]:
         """Fetch content from all configured sources.
@@ -410,16 +413,6 @@ class HorizonOrchestrator:
             if self.config.sources.openbb and self.config.sources.openbb.enabled:
                 openbb_scraper = OpenBBScraper(self.config.sources.openbb, client)
                 tasks.append(self._fetch_with_progress("OpenBB", openbb_scraper, since))
-
-            # OSS Insight trending repos
-            if self.config.sources.ossinsight and self.config.sources.ossinsight.enabled:
-                oss_scraper = OSSInsightScraper(self.config.sources.ossinsight, client)
-                tasks.append(self._fetch_with_progress("OSS Insight", oss_scraper, since))
-
-            # GDELT 2.0 DOC API (key-less global news)
-            if self.config.sources.gdelt and self.config.sources.gdelt.enabled:
-                gdelt_scraper = GDELTScraper(self.config.sources.gdelt, client)
-                tasks.append(self._fetch_with_progress("GDELT", gdelt_scraper, since))
 
             # Google News RSS (key-less news search)
             if self.config.sources.google_news and self.config.sources.google_news.enabled:
@@ -488,8 +481,6 @@ class HorizonOrchestrator:
             return meta["feed_name"]
         if meta.get("channel"):
             return f"@{meta['channel']}"
-        if meta.get("period") and meta.get("repo"):
-            return f"ossinsight:{meta.get('primary_language', 'all')}"
         if meta.get("repo"):
             return meta["repo"]
         if meta.get("watchlist"):
@@ -889,27 +880,3 @@ class HorizonOrchestrator:
         analyzer = ContentAnalyzer(ai_client)
 
         return await analyzer.analyze_batch(items)
-
-    async def _generate_summary(
-        self,
-        items: List[ContentItem],
-        date: str,
-        total_fetched: int,
-        language: str = "en",
-    ) -> str:
-        """Generate daily summary.
-
-        Args:
-            items: Important items to include (already enriched with background/related)
-            date: Date string
-            total_fetched: Total items fetched
-            language: Output language ("en" or "zh")
-
-        Returns:
-            str: Markdown summary
-        """
-        self.console.print("📝 Generating daily summary...")
-
-        summarizer = DailySummarizer()
-
-        return await summarizer.generate_summary(items, date, total_fetched, language=language)

@@ -777,7 +777,6 @@ class TestWebhookConfigModel:
         assert config.delivery == "summary"
         assert config.platform == "generic"
         assert config.layout == "markdown"
-        assert config.fallback_layout == "markdown"
 
     def test_full_config(self):
         config = WebhookConfig(
@@ -789,7 +788,6 @@ class TestWebhookConfigModel:
             overview_position="last",
             platform="feishu",
             layout="collapsible",
-            fallback_layout="markdown",
             languages=["zh"],
         )
         assert config.enabled is True
@@ -798,7 +796,6 @@ class TestWebhookConfigModel:
         assert config.overview_position == "last"
         assert config.platform == "feishu"
         assert config.layout == "collapsible"
-        assert config.fallback_layout == "markdown"
         assert config.languages == ["zh"]
 
 
@@ -1643,10 +1640,6 @@ class TestWebhookConfigFieldValidation:
         with pytest.raises(ValidationError, match="layout"):
             WebhookConfig(enabled=True, layout="html")
 
-    def test_invalid_fallback_layout_raises_validation_error(self):
-        with pytest.raises(ValidationError, match="fallback_layout"):
-            WebhookConfig(enabled=True, fallback_layout="html")
-
     def test_invalid_overview_position_raises_validation_error(self):
         with pytest.raises(ValidationError, match="overview_position"):
             WebhookConfig(enabled=True, overview_position="middle")
@@ -1657,13 +1650,11 @@ class TestWebhookConfigFieldValidation:
             delivery="summary_and_items",
             platform="feishu",
             layout="collapsible",
-            fallback_layout="markdown",
             overview_position="last",
         )
         assert config.delivery == "summary_and_items"
         assert config.platform == "feishu"
         assert config.layout == "collapsible"
-        assert config.fallback_layout == "markdown"
         assert config.overview_position == "last"
 
     def test_each_valid_platform(self):
