@@ -80,6 +80,23 @@ def _default_runs_root() -> Path:
     return Path(__file__).resolve().parents[2] / "data" / "mcp-runs"
 
 
+def _resolve_ai_stage(ai_config: Any, stage: str) -> Any:
+    """Resolve a stage override while remaining compatible with older runtimes."""
+    resolver = getattr(ai_config, "for_stage", None)
+    return resolver(stage) if callable(resolver) else ai_config
+
+
+def _effective_ai_stages(ai_config: Any) -> dict[str, Any]:
+    """Return effective configs for every explicitly configured AI stage."""
+    configured = getattr(ai_config, "stages", {}) or {}
+    return {
+        getattr(stage, "value", str(stage)): _resolve_ai_stage(
+            ai_config, getattr(stage, "value", str(stage))
+        )
+        for stage in configured
+    }
+
+
 def _get_fetch_report(orchestrator: Any) -> dict[str, Any] | None:
     """Return JSON-safe fetch diagnostics when supported by the runtime."""
     report = getattr(orchestrator, "last_fetch_report", None)
@@ -243,9 +260,13 @@ class HorizonPipelineService:
         missing_env: list[str] = []
 
         if check_env:
+            effective_stages = _effective_ai_stages(ctx.config.ai)
             required = [ctx.config.ai.api_key_env]
+            required.extend(
+                config.api_key_env for config in effective_stages.values()
+            )
             for key in required:
-                if not os.getenv(key):
+                if key and not os.getenv(key) and key not in missing_env:
                     missing_env.append(key)
 
             if ctx.config.sources.github and not os.getenv("GITHUB_TOKEN"):
@@ -268,6 +289,14 @@ class HorizonPipelineService:
                 "model": ctx.config.ai.model,
                 "languages": list(ctx.config.ai.languages),
                 "api_key_env": ctx.config.ai.api_key_env,
+                "stages": {
+                    stage: {
+                        "provider": config.provider.value,
+                        "model": config.model,
+                        "api_key_env": config.api_key_env,
+                    }
+                    for stage, config in _effective_ai_stages(ctx.config.ai).items()
+                },
             },
             "filtering": {
                 "ai_score_threshold": ctx.config.filtering.ai_score_threshold,
@@ -360,7 +389,9 @@ class HorizonPipelineService:
         if not items:
             raise HorizonMcpError(code="HZ_EMPTY_INPUT", message="No items available for scoring.")
 
-        ai_client = ctx.runtime.create_ai_client(ctx.config.ai)
+        ai_client = ctx.runtime.create_ai_client(
+            _resolve_ai_stage(ctx.config.ai, "analysis")
+        )
         analyzer = ctx.runtime.ContentAnalyzer(ai_client)
         scored_items = await analyzer.analyze_batch(items)
 
@@ -468,8 +499,16 @@ class HorizonPipelineService:
         if not items:
             raise HorizonMcpError(code="HZ_EMPTY_INPUT", message="No items available for enrichment.")
 
-        ai_client = ctx.runtime.create_ai_client(ctx.config.ai)
-        enricher = ctx.runtime.ContentEnricher(ai_client)
+        ai_client = ctx.runtime.create_ai_client(
+            _resolve_ai_stage(ctx.config.ai, "enrichment")
+        )
+        translation_client = ctx.runtime.create_ai_client(
+            _resolve_ai_stage(ctx.config.ai, "translation")
+        )
+        enricher = ctx.runtime.ContentEnricher(
+            ai_client,
+            translation_client=translation_client,
+        )
         await enricher.enrich_batch(items)
 
         self.run_store.save_items(run_id, "enriched", items_to_dicts(items))

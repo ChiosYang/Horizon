@@ -9,7 +9,8 @@ Horizon is configured through two files: a `.env` file for API keys and a `data/
 
 ## AI Providers
 
-Configure which AI model scores and summarizes your content.
+Configure the default model used by Horizon's AI-powered stages. Individual
+stages can optionally override this default.
 
 `api_key_env` is always an environment variable name, not the API key value.
 Store secrets in `.env` or your shell environment, then point `api_key_env` at
@@ -170,6 +171,83 @@ For remote Ollama servers, set `ai.base_url` in `data/config.json` or set
 `HORIZON_OLLAMA_BASE_URL` in `.env`. `OLLAMA_BASE_URL` and `OLLAMA_HOST` are
 also recognized. If the value omits `/v1`, Horizon appends it automatically
 for Ollama's OpenAI-compatible endpoint.
+
+### Stage-specific AI models
+
+The top-level `ai` fields remain the default for every AI call. Add entries
+under `ai.stages` only where a pipeline stage should use a different model or
+provider:
+
+| Stage | AI work performed |
+| --- | --- |
+| `analysis` | Score items, generate the initial summary and tags, and re-analyze expanded Twitter discussions |
+| `deduplication` | Detect semantically duplicated stories after score filtering |
+| `enrichment` | Extract concepts and generate grounded background and discussion context |
+| `translation` | Produce the lightweight Chinese translation used when full enrichment fails |
+| `source_recommendation` | Recommend additional sources in the setup wizard |
+
+For example, use a fast model by default and a stronger model only for
+background enrichment:
+
+```json
+{
+  "ai": {
+    "provider": "deepseek",
+    "model": "deepseek-v4-flash",
+    "api_key_env": "DEEPSEEK_API_KEY",
+    "temperature": 0.3,
+    "max_tokens": 4096,
+    "stages": {
+      "analysis": {
+        "model": "deepseek-v4-flash"
+      },
+      "deduplication": {
+        "model": "deepseek-v4-flash"
+      },
+      "enrichment": {
+        "model": "deepseek-v4-pro"
+      },
+      "translation": {
+        "model": "deepseek-v4-flash"
+      },
+      "source_recommendation": {
+        "model": "deepseek-v4-flash"
+      }
+    }
+  }
+}
+```
+
+Each stage entry is an override. Fields that are omitted inherit the top-level
+AI configuration. A stage can override `provider`, `provider_chain`, `model`,
+`base_url`, `api_key_env`, `temperature`, `max_tokens`, `throttle_sec`, and the
+analysis or enrichment concurrency settings.
+
+When a stage changes `provider`, Horizon first loads that provider's built-in
+model, API-key environment variable, endpoint, and Azure-specific defaults,
+then applies the explicit stage values. This prevents credentials or endpoints
+from the default provider leaking into another provider. For example:
+
+```json
+{
+  "ai": {
+    "provider": "deepseek",
+    "model": "deepseek-v4-flash",
+    "api_key_env": "DEEPSEEK_API_KEY",
+    "stages": {
+      "enrichment": {
+        "provider": "ollama",
+        "model": "llama3.1"
+      }
+    }
+  }
+}
+```
+
+`provider_chain` is still automatic failure fallback within a stage; it does
+not route different tasks by itself. A stage inherits a top-level chain unless
+the stage explicitly sets `"provider_chain": null`. Final Markdown rendering
+is programmatic and does not call an AI model.
 
 ### AI throttling
 

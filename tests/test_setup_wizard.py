@@ -74,7 +74,15 @@ def test_merge_configs_preserves_all_existing_configuration_and_deduplicates_lis
     existing = Config.model_validate(
         {
             "version": "2.7",
-            "ai": {"provider": "openai", "model": "old", "api_key_env": "OLD_KEY"},
+            "ai": {
+                "provider": "openai",
+                "model": "old",
+                "api_key_env": "OLD_KEY",
+                "stages": {
+                    "analysis": {"model": "fast-model"},
+                    "enrichment": {"provider": "deepseek"},
+                },
+            },
             "filtering": {"ai_score_threshold": 3, "max_items": 9},
             "extractors": {"html": {"type": "trafilatura", "favor_precision": True}},
             "email": {
@@ -124,7 +132,10 @@ def test_merge_configs_preserves_all_existing_configuration_and_deduplicates_lis
     assert merged.extractors == existing.extractors
     assert merged.email == existing.email
     assert merged.webhook == existing.webhook
-    assert merged.ai == new.ai
+    assert merged.ai.provider == new.ai.provider
+    assert merged.ai.model == new.ai.model
+    assert merged.ai.api_key_env == new.ai.api_key_env
+    assert merged.ai.stages == existing.ai.stages
     assert merged.filtering == new.filtering
     for name in ("hackernews", "twitter", "openbb", "ossinsight", "gdelt", "google_news"):
         assert getattr(merged.sources, name) == getattr(existing.sources, name)
@@ -146,3 +157,36 @@ def test_merge_configs_preserves_all_existing_configuration_and_deduplicates_lis
     assert merged.sources.reddit.users[0].fetch_limit == 3
     assert merged.sources.telegram.channels[0].enabled is False
     assert merged.sources.telegram.channels[0].fetch_limit == 7
+
+
+def test_existing_stage_overrides_are_available_during_wizard_recommendations():
+    existing = Config.model_validate(
+        {
+            "ai": {
+                "provider": "openai",
+                "model": "old-model",
+                "api_key_env": "OLD_KEY",
+                "stages": {
+                    "source_recommendation": {
+                        "provider": "ollama",
+                        "model": "recommendation-model",
+                    }
+                },
+            },
+            "sources": {},
+            "filtering": {},
+        }
+    )
+    new_ai = AIConfig(
+        provider=AIProvider.DEEPSEEK,
+        model="new-default",
+        api_key_env="NEW_KEY",
+    )
+
+    effective = wizard._with_existing_ai_stages(new_ai, existing)
+    recommendation = effective.for_stage("source_recommendation")
+
+    assert effective.provider == AIProvider.DEEPSEEK
+    assert recommendation.provider == AIProvider.OLLAMA
+    assert recommendation.model == "recommendation-model"
+    assert new_ai.stages == {}

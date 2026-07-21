@@ -53,6 +53,51 @@ def test_validate_config_smoke(tmp_path: Path) -> None:
     assert result["missing_env"] == []
 
 
+def test_validate_config_reports_effective_stage_models_and_envs(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    config = json.loads(
+        (repo_root / "data" / "config.example.json").read_text(encoding="utf-8")
+    )
+    config["ai"]["api_key_env"] = "TEST_DEFAULT_AI_KEY"
+    config["ai"]["stages"] = {
+        "analysis": {
+            "model": "analysis-model",
+            "api_key_env": "TEST_ANALYSIS_AI_KEY",
+        },
+        "translation": {
+            "provider": "ollama",
+        },
+    }
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+    monkeypatch.delenv("TEST_DEFAULT_AI_KEY", raising=False)
+    monkeypatch.delenv("TEST_ANALYSIS_AI_KEY", raising=False)
+
+    result = asyncio.run(
+        HorizonPipelineService(runs_root=tmp_path / "runs").validate_config(
+            horizon_path=str(repo_root),
+            config_path=str(config_path),
+        )
+    )
+
+    assert result["missing_env"] == [
+        "TEST_DEFAULT_AI_KEY",
+        "TEST_ANALYSIS_AI_KEY",
+    ]
+    assert result["ai"]["stages"]["analysis"] == {
+        "provider": "openai",
+        "model": "analysis-model",
+        "api_key_env": "TEST_ANALYSIS_AI_KEY",
+    }
+    assert result["ai"]["stages"]["translation"] == {
+        "provider": "ollama",
+        "model": "llama3.1",
+        "api_key_env": "",
+    }
+
+
 def test_get_effective_config_can_filter_sources(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     config_path = tmp_path / "config.json"

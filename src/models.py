@@ -78,6 +78,16 @@ class AIProvider(str, Enum):
     OLLAMA = "ollama"
 
 
+class AIStage(str, Enum):
+    """Pipeline stages that can override the default AI configuration."""
+
+    ANALYSIS = "analysis"
+    DEDUPLICATION = "deduplication"
+    ENRICHMENT = "enrichment"
+    TRANSLATION = "translation"
+    SOURCE_RECOMMENDATION = "source_recommendation"
+
+
 # Provider-specific defaults used by setup and provider-chain expansion.
 AI_PROVIDER_DEFAULTS = {
     AIProvider.ANTHROPIC: {
@@ -130,6 +140,23 @@ AI_PROVIDER_DEFAULTS = {
 }
 
 
+class AIStageConfig(BaseModel):
+    """Optional overrides applied to one AI-powered pipeline stage."""
+
+    provider: Optional[AIProvider] = None
+    provider_chain: Optional[str] = None
+    model: Optional[str] = None
+    base_url: Optional[str] = None
+    api_key_env: Optional[str] = None
+    temperature: Optional[float] = None
+    max_tokens: Optional[int] = None
+    throttle_sec: Optional[float] = None
+    analysis_concurrency: Optional[int] = None
+    enrichment_concurrency: Optional[int] = None
+    azure_endpoint_env: Optional[str] = None
+    api_version: Optional[str] = None
+
+
 class AIConfig(BaseModel):
     """AI client configuration."""
 
@@ -144,6 +171,7 @@ class AIConfig(BaseModel):
     analysis_concurrency: int = 1
     enrichment_concurrency: int = 1
     languages: List[str] = Field(default_factory=lambda: ["en"])
+    stages: Dict[AIStage, AIStageConfig] = Field(default_factory=dict)
     # Azure OpenAI specific; required when provider == AZURE
     azure_endpoint_env: Optional[str] = None
     api_version: Optional[str] = None
@@ -157,6 +185,40 @@ class AIConfig(BaseModel):
         if invalid:
             raise ValueError(f"invalid language code: {invalid[0]!r}")
         return languages
+
+    def for_stage(self, stage: AIStage | str) -> "AIConfig":
+        """Return a standalone client config with one stage's overrides applied.
+
+        Unspecified fields inherit the top-level defaults. When a stage switches
+        providers, that provider's connection defaults are applied before the
+        explicit stage values so credentials and endpoints do not leak across
+        providers. An explicitly configured null value still clears an inherited
+        optional field such as ``provider_chain`` or ``base_url``.
+        """
+        stage_key = AIStage(stage)
+        values = self.model_dump(exclude={"stages"})
+        override = self.stages.get(stage_key)
+        if override is None:
+            return AIConfig.model_validate(values)
+
+        override_values = override.model_dump(exclude_unset=True)
+        provider = override_values.get("provider", self.provider)
+        if provider != self.provider:
+            defaults = AI_PROVIDER_DEFAULTS[provider]
+            values.update(
+                {
+                    "provider": provider,
+                    "provider_chain": None,
+                    "model": defaults["model"],
+                    "api_key_env": defaults["api_key_env"],
+                    "base_url": defaults.get("base_url"),
+                    "azure_endpoint_env": defaults.get("azure_endpoint_env"),
+                    "api_version": defaults.get("api_version"),
+                }
+            )
+
+        values.update(override_values)
+        return AIConfig.model_validate(values)
 
 
 class GitHubSourceConfig(BaseModel):

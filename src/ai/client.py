@@ -646,11 +646,18 @@ def _create_chained_client(config: AIConfig) -> ChainedAIClient:
             raise ValueError(f"Unsupported AI provider in chain: {name}")
 
         defaults = AI_PROVIDER_DEFAULTS.get(provider, {})
-        base_url = config.base_url if provider == config.provider else defaults.get("base_url")
+        is_primary = provider == config.provider
+        model = config.model if is_primary else defaults.get("model", config.model)
+        api_key_env = (
+            config.api_key_env
+            if is_primary
+            else defaults.get("api_key_env", config.api_key_env)
+        )
+        base_url = config.base_url if is_primary else defaults.get("base_url")
         cfg = AIConfig(
             provider=provider,
-            model=defaults.get("model", config.model),
-            api_key_env=defaults.get("api_key_env", config.api_key_env),
+            model=model,
+            api_key_env=api_key_env,
             base_url=base_url,
             temperature=config.temperature,
             max_tokens=config.max_tokens,
@@ -660,11 +667,15 @@ def _create_chained_client(config: AIConfig) -> ChainedAIClient:
             languages=config.languages,
             azure_endpoint_env=(
                 config.azure_endpoint_env or defaults.get("azure_endpoint_env")
+                if provider == AIProvider.AZURE and is_primary
+                else defaults.get("azure_endpoint_env")
                 if provider == AIProvider.AZURE
                 else None
             ),
             api_version=(
                 config.api_version or defaults.get("api_version")
+                if provider == AIProvider.AZURE and is_primary
+                else defaults.get("api_version")
                 if provider == AIProvider.AZURE
                 else None
             ),
