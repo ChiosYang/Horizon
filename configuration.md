@@ -9,7 +9,8 @@ Horizon is configured through two files: a `.env` file for API keys and a `data/
 
 ## AI Providers
 
-Configure which AI model scores and summarizes your content.
+Configure the default model used by Horizon's AI-powered stages. Individual
+stages can optionally override this default.
 
 `api_key_env` is always an environment variable name, not the API key value.
 Store secrets in `.env` or your shell environment, then point `api_key_env` at
@@ -170,6 +171,83 @@ For remote Ollama servers, set `ai.base_url` in `data/config.json` or set
 `HORIZON_OLLAMA_BASE_URL` in `.env`. `OLLAMA_BASE_URL` and `OLLAMA_HOST` are
 also recognized. If the value omits `/v1`, Horizon appends it automatically
 for Ollama's OpenAI-compatible endpoint.
+
+### Stage-specific AI models
+
+The top-level `ai` fields remain the default for every AI call. Add entries
+under `ai.stages` only where a pipeline stage should use a different model or
+provider:
+
+| Stage | AI work performed |
+| --- | --- |
+| `analysis` | Score items, generate the initial summary and tags, and re-analyze expanded Twitter discussions |
+| `deduplication` | Detect semantically duplicated stories after score filtering |
+| `enrichment` | Extract concepts and generate grounded background and discussion context |
+| `translation` | Produce the lightweight Chinese translation used when full enrichment fails |
+| `source_recommendation` | Recommend additional sources in the setup wizard |
+
+For example, use a fast model by default and a stronger model only for
+background enrichment:
+
+```json
+{
+  "ai": {
+    "provider": "deepseek",
+    "model": "deepseek-v4-flash",
+    "api_key_env": "DEEPSEEK_API_KEY",
+    "temperature": 0.3,
+    "max_tokens": 4096,
+    "stages": {
+      "analysis": {
+        "model": "deepseek-v4-flash"
+      },
+      "deduplication": {
+        "model": "deepseek-v4-flash"
+      },
+      "enrichment": {
+        "model": "deepseek-v4-pro"
+      },
+      "translation": {
+        "model": "deepseek-v4-flash"
+      },
+      "source_recommendation": {
+        "model": "deepseek-v4-flash"
+      }
+    }
+  }
+}
+```
+
+Each stage entry is an override. Fields that are omitted inherit the top-level
+AI configuration. A stage can override `provider`, `provider_chain`, `model`,
+`base_url`, `api_key_env`, `temperature`, `max_tokens`, `throttle_sec`, and the
+analysis or enrichment concurrency settings.
+
+When a stage changes `provider`, Horizon first loads that provider's built-in
+model, API-key environment variable, endpoint, and Azure-specific defaults,
+then applies the explicit stage values. This prevents credentials or endpoints
+from the default provider leaking into another provider. For example:
+
+```json
+{
+  "ai": {
+    "provider": "deepseek",
+    "model": "deepseek-v4-flash",
+    "api_key_env": "DEEPSEEK_API_KEY",
+    "stages": {
+      "enrichment": {
+        "provider": "ollama",
+        "model": "llama3.1"
+      }
+    }
+  }
+}
+```
+
+`provider_chain` is still automatic failure fallback within a stage; it does
+not route different tasks by itself. A stage inherits a top-level chain unless
+the stage explicitly sets `"provider_chain": null`. Final Markdown rendering
+is programmatic and does not call an AI model.
 
 ### AI throttling
 
@@ -418,34 +496,37 @@ uv pip install --only-binary=:all: openbb openbb-benzinga
 
 OpenBB provider credentials are handled by the OpenBB SDK itself, using its own environment variables or user settings. Horizon does not pass those secrets through `data/config.json`.
 
-### OSS Insight (Trending GitHub Repos)
+### Google News
 
-Pulls top star-gain repositories from the [OSS Insight](https://ossinsight.io) public API, which aggregates GitHub WatchEvents. Useful for surfacing repos that are gaining stars right now without needing to scrape GitHub Trending or query BigQuery.
+Uses the public Google News RSS search endpoint to fetch recent articles for a query. This is the built-in query-based news source; use normal RSS entries for known publications and the GitHub Trending RSS preset for popular repositories.
 
 ```json
 {
   "sources": {
-    "ossinsight": {
+    "google_news": {
       "enabled": true,
-      "period": "past_24_hours",
-      "languages": ["All", "Python", "TypeScript"],
-      "keywords": [],
-      "min_stars": 10,
-      "max_items": 30,
-      "category": "oss-trending"
+      "query": "artificial intelligence",
+      "language": "en",
+      "country": "US",
+      "ceid": null,
+      "max_results": 100,
+      "category": "ai-news"
     }
   }
 }
 ```
 
-- `period` — time window for star-gain ranking. Supported: `past_24_hours`, `past_28_days`. (`past_7_days` is currently broken upstream.)
-- `languages` — primary language buckets to query. Use `"All"` for the full ranking, or any GitHub language label such as `"Python"`, `"TypeScript"`, `"Rust"`, `"Jupyter Notebook"`. The scraper fans out one request per language and merges results.
-- `keywords` — optional case-insensitive substrings matched against `description`, `collection_names`, and `repo_name`. Only repos containing at least one keyword pass through. Leave empty to ingest everything trending.
-- `min_stars` — drop repos with fewer than this many stars gained in the period.
-- `max_items` — final cap after merging and sorting by `stars_gained` descending.
-- `category` — optional tag for balanced digest grouping (e.g., `"oss-trending"`)
+- `query` — Google News search expression. Horizon appends the configured time window.
+- `language` / `country` — locale used for the RSS request.
+- `ceid` — optional Google News edition identifier; defaults to `"{country}:{language}"`.
+- `max_results` — maximum number of feed entries accepted per run.
+- `category` — optional tag for balanced digest grouping.
 
 No API key is required.
+
+If an existing configuration used `sources.gdelt`, move its query to
+`sources.google_news`. For GitHub popularity tracking, use the
+`GitHub Trending - Daily` RSS preset instead of a dedicated source block.
 
 ## Filtering
 
@@ -502,8 +583,7 @@ All source types support a `category` field: `sources.rss[].category`,
 `sources.github[].category`, `sources.hackernews.category`,
 `sources.reddit.subreddits[].category`, `sources.reddit.users[].category`,
 `sources.telegram.channels[].category`, `sources.twitter.category`,
-`sources.openbb.watchlists[].category`, `sources.ossinsight.category`,
-`sources.gdelt.category`, and `sources.google_news.category`.
+`sources.openbb.watchlists[].category`, and `sources.google_news.category`.
 Sources without a category set enter the default group.
 
 If the same category appears in multiple groups, Horizon logs a warning and uses
@@ -541,9 +621,9 @@ Example:
 - Unset variables are left as `${NAME}` instead of becoming an empty string, so configuration mistakes fail loudly downstream.
 - Expansion is recursive through dicts, lists, and tuples; non-string values are left unchanged.
 
-## Email Subscription
+## Email Delivery
 
-Email delivery is optional and disabled unless `email.enabled` is `true`. Horizon uses SMTP to send daily summaries and IMAP to check subscribe/unsubscribe requests.
+Email delivery is optional and disabled unless `email.enabled` is `true`. Horizon sends summaries over SMTP to the fixed recipient list in the configuration.
 
 ```json
 {
@@ -552,27 +632,21 @@ Email delivery is optional and disabled unless `email.enabled` is `true`. Horizo
     "smtp_server": "smtp.qq.com",
     "smtp_port": 465,
     "smtp_username": null,
-    "imap_enabled": true,
-    "imap_server": "imap.qq.com",
-    "imap_port": 993,
     "email_address": "xxx@qq.com",
+    "recipients": ["reader@example.com"],
     "password_env": "EMAIL_PASSWORD",
-    "sender_name": "Horizon Daily",
-    "subscribe_keyword": "SUBSCRIBE",
-    "unsubscribe_keyword": "UNSUBSCRIBE"
+    "sender_name": "Horizon Daily"
   }
 }
 ```
 
-- `enabled`: Turns email subscription handling and daily email delivery on or off.
+- `enabled`: Turns daily email delivery on or off.
 - `smtp_server` / `smtp_port`: SMTP server used to send emails.
 - `smtp_username`: Optional SMTP login username. If omitted, Horizon uses `email_address`.
-- `imap_enabled`: Turns IMAP subscribe/unsubscribe checks on or off. Set it to `false` for send-only SMTP providers.
-- `imap_server` / `imap_port`: IMAP server used to scan incoming subscription requests when `imap_enabled` is `true`.
-- `email_address`: Sender account and mailbox checked for subscription requests.
+- `email_address`: Sender email address and default SMTP login username.
+- `recipients`: Fixed list of recipient email addresses.
 - `password_env`: Environment variable containing the email password or app password. Defaults to `EMAIL_PASSWORD`.
 - `sender_name`: Display name shown in sent emails.
-- `subscribe_keyword` / `unsubscribe_keyword`: Keywords Horizon looks for in incoming email subjects.
 
 Resend SMTP example:
 
@@ -584,16 +658,19 @@ Resend SMTP example:
     "smtp_port": 465,
     "smtp_username": "resend",
     "password_env": "RESEND_API_KEY",
-    "imap_enabled": false,
-    "imap_server": "",
-    "imap_port": 993,
     "email_address": "noreply@example.com",
+    "recipients": ["reader@example.com"],
     "sender_name": "Horizon Daily"
   }
 }
 ```
 
-Set `RESEND_API_KEY` in `.env`. Recipients are loaded from `data/subscribers.json`.
+Set `RESEND_API_KEY` in `.env`. Add every destination address to `email.recipients`.
+
+When migrating from an older configuration, copy the addresses from
+`data/subscribers.json` into `email.recipients`, then remove the legacy IMAP
+and subscribe/unsubscribe fields. Horizon no longer reads the mailbox or the
+subscriber file.
 
 ## Webhook Notification
 
@@ -608,7 +685,6 @@ Webhook notification is optional and disabled unless `webhook.enabled` is `true`
     "overview_position": "first",
     "platform": "generic",
     "layout": "markdown",
-    "fallback_layout": "markdown",
     "languages": null,
     "request_body": {
       "text": "#{message_title}\n#{summary}"
@@ -624,7 +700,6 @@ Webhook notification is optional and disabled unless `webhook.enabled` is `true`
 - `overview_position`: Controls where the overview is sent in `summary_and_items` mode. Use `first` for the traditional order, or `last` to send item details in reverse and keep the overview as the newest chat message.
 - `platform`: Optional webhook platform hint. Use `generic` by default, or `feishu` / `lark` to enable platform-specific card rendering.
 - `layout`: Controls the message layout. Use `markdown` for templated Markdown delivery, or `collapsible` with `platform: "feishu"` / `"lark"` for a single Feishu Card JSON 2.0 message with each item in a collapsed panel.
-- `fallback_layout`: Reserved fallback layout for unsupported platform/layout combinations. The current safe fallback is `markdown`.
 - `languages`: Optional webhook-only language filter. Use `["zh"]` or `["en"]` to send only selected languages; use `null` or omit it to send all configured `ai.languages`.
 - `request_body`: Optional request body. If empty, Horizon sends a `GET` request. If provided, Horizon sends a `POST` request.
 - `headers`: Optional custom headers, one `Key: Value` pair per line.
@@ -728,7 +803,6 @@ To keep the group chat compact while still allowing readers to browse the full b
     "url_env": "HORIZON_WEBHOOK_URL",
     "platform": "feishu",
     "layout": "collapsible",
-    "fallback_layout": "markdown",
     "languages": ["zh"]
   }
 }
@@ -772,9 +846,19 @@ With this layout, Horizon sends one interactive card containing the overview and
 
 ## Static Site
 
-Horizon writes generated summaries to `data/summaries/` and copies publishable Markdown into `docs/` for the GitHub Pages site. The repository includes a ready-to-use workflow at `.github/workflows/daily-summary.yml`.
+Horizon always writes generated summaries to `data/summaries/`. GitHub Pages output is opt-in and disabled by default. Enable it to also copy publishable Markdown into `docs/_posts/`:
 
-To use GitHub Pages, enable Pages for the repository and run the scheduled workflow or trigger it manually. The generated site is built from the `docs/` directory.
+```json
+{
+  "github_pages": {
+    "enabled": true
+  }
+}
+```
+
+The repository workflow in `.github/workflows/daily-summary.yml` uses `data/config.github.json`, which enables this setting.
+
+To publish the site, enable Pages for the repository and run the scheduled workflow or trigger it manually. The generated site is built from the `docs/` directory.
 
 ## MCP Server
 

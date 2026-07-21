@@ -97,6 +97,30 @@ Fetches any Atom/RSS feed using the `feedparser` library. Tries multiple date fi
 
 **Extracted data**: title, URL, author, content (from `summary`/`description`/`content` fields, or full article text if an extractor is configured), feed name, category, and entry tags.
 
+## Google News
+
+**File**: `src/scrapers/google_news.py`
+
+Uses the public Google News RSS search endpoint for query-based discovery. Horizon appends a time operator derived from the pipeline window and passes locale settings through `language`, `country`, and optional `ceid` fields.
+
+**Config** (`sources.google_news`):
+
+```json
+{
+  "enabled": true,
+  "query": "artificial intelligence",
+  "language": "en",
+  "country": "US",
+  "ceid": null,
+  "max_results": 100,
+  "category": "ai-news"
+}
+```
+
+No API key is required. Entries are capped after parsing, malformed rows are skipped, and the publisher name is stored in item metadata.
+
+**Extracted data**: title, Google News URL, publisher, publication time, feed summary, query, and category.
+
 ## Reddit
 
 **File**: `src/scrapers/reddit.py`
