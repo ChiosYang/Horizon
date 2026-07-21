@@ -39,6 +39,34 @@
         "owner": "triton-lang",
         "repo": "triton",
         "enabled": true
+      },
+      {
+        "type": "repo_releases",
+        "owner": "openai",
+        "repo": "openai-python",
+        "enabled": true,
+        "category": "ai-sdk"
+      },
+      {
+        "type": "repo_releases",
+        "owner": "anthropics",
+        "repo": "anthropic-sdk-python",
+        "enabled": true,
+        "category": "ai-sdk"
+      },
+      {
+        "type": "repo_releases",
+        "owner": "huggingface",
+        "repo": "transformers",
+        "enabled": true,
+        "category": "ai-tools"
+      },
+      {
+        "type": "repo_releases",
+        "owner": "ollama",
+        "repo": "ollama",
+        "enabled": true,
+        "category": "ai-tools"
       }
     ],
     "hackernews": {
@@ -54,12 +82,6 @@
         "category": "ai-tools"
       },
       {
-        "name": "GitHub Trending - Daily",
-        "url": "https://mshibanami.github.io/GitHubTrendingRSS/daily/all.xml",
-        "enabled": true,
-        "category": "github-trending"
-      },
-      {
         "name": "Semianalysis",
         "url": "https://newsletter.semianalysis.com/feed",
         "enabled": true,
@@ -70,6 +92,24 @@
         "url": "https://lwn.net/headlines/full_text?key=${LWN_KEY}",
         "enabled": true,
         "category": "linux-kernel"
+      },
+      {
+        "name": "OpenAI News",
+        "url": "https://openai.com/news/rss.xml",
+        "enabled": true,
+        "category": "ai-news"
+      },
+      {
+        "name": "Google DeepMind",
+        "url": "https://deepmind.google/blog/rss.xml",
+        "enabled": true,
+        "category": "ai-research"
+      },
+      {
+        "name": "Hugging Face Blog",
+        "url": "https://huggingface.co/blog/feed.xml",
+        "enabled": true,
+        "category": "ai-tools"
       }
     ],
     "reddit": {
@@ -104,6 +144,30 @@
           "fetch_limit": 20
         }
       ]
+    },
+    "ossinsight": {
+      "enabled": true,
+      "period": "past_24_hours",
+      "languages": [
+        "All",
+        "Python",
+        "TypeScript"
+      ],
+      "keywords": [
+        "llm",
+        "agent",
+        "rag",
+        "inference",
+        "transformer",
+        "embedding",
+        "diffusion",
+        "multimodal",
+        "machine learning",
+        "deep learning"
+      ],
+      "min_stars": 2,
+      "max_items": 10,
+      "category": "ai-oss"
     }
   },
   "filtering": {
