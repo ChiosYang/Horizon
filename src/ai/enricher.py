@@ -27,8 +27,13 @@ from ..models import ContentItem
 class ContentEnricher:
     """Enriches high-scoring content items with background knowledge."""
 
-    def __init__(self, ai_client: AIClient):
+    def __init__(
+        self,
+        ai_client: AIClient,
+        translation_client: Optional[AIClient] = None,
+    ):
         self.client = ai_client
+        self.translation_client = translation_client or ai_client
 
     def _get_concurrency(self) -> int:
         """Return the configured enrichment concurrency, clamped to 1 or above."""
@@ -240,7 +245,7 @@ class ContentEnricher:
         """Lightweight translation fallback: when full enrichment fails, at least
         translate the title and summary to Chinese so the item is not dropped."""
         try:
-            response = await self.client.complete(
+            response = await self.translation_client.complete(
                 system="You are a translator. Translate to Simplified Chinese. Return only valid JSON, no other text.",
                 user=(
                     f'Title: {item.title}\n'

@@ -5,7 +5,7 @@ from typing import List, Dict, Optional
 
 from ..ai.client import create_ai_client
 from ..ai.utils import parse_json_response
-from ..models import AIConfig
+from ..models import AIConfig, AIStage
 from .prompts import RECOMMEND_SYSTEM, RECOMMEND_USER
 
 
@@ -25,7 +25,9 @@ async def get_ai_recommendations(
         List of recommended source dicts with origin="ai".
     """
     try:
-        client = create_ai_client(ai_config)
+        client = create_ai_client(
+            ai_config.for_stage(AIStage.SOURCE_RECOMMENDATION)
+        )
     except (ValueError, Exception):
         return []
 

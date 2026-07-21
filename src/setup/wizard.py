@@ -13,7 +13,7 @@ from rich.table import Table
 from rich.panel import Panel
 
 from ..models import (
-    AIConfig, AIProvider, AI_PROVIDER_DEFAULTS, Config, FilteringConfig, SourcesConfig,
+    AIConfig, AIProvider, AIStage, AI_PROVIDER_DEFAULTS, Config, FilteringConfig, SourcesConfig,
     GitHubSourceConfig, HackerNewsConfig, RSSSourceConfig,
     RedditConfig, RedditSubredditConfig, RedditUserConfig,
     TelegramConfig, TelegramChannelConfig,
@@ -104,9 +104,29 @@ def configure_ai() -> Optional[AIConfig]:
 
 
 def _ai_recommendations_available(ai_config: AIConfig) -> bool:
-    if ai_config.provider == AIProvider.OLLAMA:
+    recommendation_config = ai_config.for_stage(AIStage.SOURCE_RECOMMENDATION)
+    if recommendation_config.provider == AIProvider.OLLAMA:
         return True
-    return bool(ai_config.api_key_env and os.getenv(ai_config.api_key_env))
+    return bool(
+        recommendation_config.api_key_env
+        and os.getenv(recommendation_config.api_key_env)
+    )
+
+
+def _with_existing_ai_stages(
+    ai_config: AIConfig,
+    existing_config: Optional[Config],
+) -> AIConfig:
+    """Apply saved stage overrides while the wizard builds its new config."""
+    if existing_config is None or not existing_config.ai.stages:
+        return ai_config
+
+    effective = ai_config.model_copy(deep=True)
+    effective.stages = {
+        stage: config.model_copy(deep=True)
+        for stage, config in existing_config.ai.stages.items()
+    }
+    return effective
 
 
 def get_interests() -> str:
@@ -295,7 +315,8 @@ def merge_configs(new_config: Config, existing_config: Config) -> Config:
     """Merge new config into existing config, deduplicating sources.
 
     Rules:
-    - ai / filtering: use new values (full replacement)
+    - ai / filtering: use new values; preserve existing stage overrides when
+      the new AI config does not define any
     - sources: deduplicate by unique key, append new ones
     - existing enabled=false sources are preserved
 
@@ -308,6 +329,11 @@ def merge_configs(new_config: Config, existing_config: Config) -> Config:
     """
     merged = existing_config.model_copy(deep=True)
     merged.ai = new_config.ai.model_copy(deep=True)
+    if not merged.ai.stages and existing_config.ai.stages:
+        merged.ai.stages = {
+            stage: config.model_copy(deep=True)
+            for stage, config in existing_config.ai.stages.items()
+        }
     merged.filtering = new_config.filtering.model_copy(deep=True)
 
     merged.sources.github = _merge_source_list(
@@ -366,6 +392,13 @@ def main():
         console.print("[red]Setup cancelled.[/red]")
         sys.exit(0)
 
+    try:
+        existing = storage.load_config()
+    except FileNotFoundError:
+        existing = None
+
+    recommendation_ai_config = _with_existing_ai_stages(ai_config, existing)
+
     # Step 2: Interest description
     interests = get_interests()
 
@@ -393,21 +426,29 @@ def main():
 
     # Step 4: AI recommendations (optional)
     ai_sources = []
-    ai_available = _ai_recommendations_available(ai_config)
+    recommendation_config = recommendation_ai_config.for_stage(
+        AIStage.SOURCE_RECOMMENDATION
+    )
+    ai_available = _ai_recommendations_available(recommendation_ai_config)
 
     if ai_available:
         if Confirm.ask("\nAsk AI for additional source recommendations?", default=True):
             console.print("[dim]Asking AI for recommendations...[/dim]")
             from .ai_recommend import get_ai_recommendations_sync
 
-            ai_sources = get_ai_recommendations_sync(ai_config, interests, preset_sources)
+            ai_sources = get_ai_recommendations_sync(
+                recommendation_ai_config,
+                interests,
+                preset_sources,
+            )
             if ai_sources:
                 console.print(f"[green]AI recommended {len(ai_sources)} additional sources[/green]")
             else:
                 console.print("[yellow]AI returned no additional recommendations.[/yellow]")
     else:
         console.print(
-            f"\n[dim]Skipping AI recommendations ({ai_config.api_key_env} not set)[/dim]"
+            f"\n[dim]Skipping AI recommendations "
+            f"({recommendation_config.api_key_env} not set)[/dim]"
         )
 
     # Step 5: Interactive source selection
@@ -420,12 +461,9 @@ def main():
     config = build_config(ai_config, selected)
 
     # Merge with existing config if present
-    try:
-        existing = storage.load_config()
+    if existing is not None:
         if Confirm.ask("\nExisting config.json found. Merge new sources into it?", default=True):
             config = merge_configs(config, existing)
-    except FileNotFoundError:
-        pass
 
     # Save
     path = storage.save_config(config, backup=True)

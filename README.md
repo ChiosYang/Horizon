@@ -77,6 +77,7 @@ But Horizon is not just another summarizer. AI is great at reducing noise, but n
 
 - **📡 Watch Your Own Sources** — Track Hacker News, RSS, Reddit, Telegram, Twitter/X, GitHub releases or user activity, and OpenBB financial news watchlists in one pipeline
 - **🤖 Turn Noise Into a Reading List** — Score each item from 0-10 with Claude, GPT, Gemini, DeepSeek, Doubao, MiniMax, Ollama, or any OpenAI-compatible API
+- **🧭 Route Each AI Stage** — Use different models or providers for scoring, semantic deduplication, enrichment, translation, and setup recommendations
 - **🔗 Merge Repeated Stories** — Deduplicate the same story across platforms before it reaches your briefing
 - **🔍 Understand the Background** — Add web-researched context for unfamiliar concepts, companies, projects, and technical terms
 - **💬 Read the Conversation** — Collect and summarize community comments from Hacker News, Reddit, and other supported sources

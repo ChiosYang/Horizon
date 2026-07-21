@@ -9,7 +9,7 @@ from urllib.parse import unquote_plus, urlsplit
 import httpx
 from rich.console import Console
 
-from .models import Config, ContentItem
+from .models import AIStage, Config, ContentItem
 from .storage.manager import StorageManager, safe_output_path
 from .services.email import EmailManager
 from .services.webhook import WebhookNotifier
@@ -583,7 +583,9 @@ class HorizonOrchestrator:
         items_text = "\n\n".join(lines)
 
         try:
-            ai_client = create_ai_client(self.config.ai)
+            ai_client = create_ai_client(
+                self.config.ai.for_stage(AIStage.DEDUPLICATION)
+            )
             response = await ai_client.complete(
                 system=TOPIC_DEDUP_SYSTEM,
                 user=TOPIC_DEDUP_USER.format(items=items_text),
@@ -844,7 +846,7 @@ class HorizonOrchestrator:
         self.console.print(
             f"   Re-analyzing {len(expanded)} Twitter items with reply context...\n"
         )
-        ai_client = create_ai_client(self.config.ai)
+        ai_client = create_ai_client(self.config.ai.for_stage(AIStage.ANALYSIS))
         analyzer = ContentAnalyzer(ai_client)
         await analyzer.analyze_batch(expanded)
 
@@ -861,8 +863,14 @@ class HorizonOrchestrator:
             return
 
         self.console.print("📚 Enriching with background knowledge...")
-        ai_client = create_ai_client(self.config.ai)
-        enricher = ContentEnricher(ai_client)
+        ai_client = create_ai_client(self.config.ai.for_stage(AIStage.ENRICHMENT))
+        translation_client = create_ai_client(
+            self.config.ai.for_stage(AIStage.TRANSLATION)
+        )
+        enricher = ContentEnricher(
+            ai_client,
+            translation_client=translation_client,
+        )
         await enricher.enrich_batch(items)
         self.console.print(f"   Enriched {len(items)} items\n")
 
@@ -877,7 +885,7 @@ class HorizonOrchestrator:
         """
         self.console.print("🤖 Analyzing content with AI...")
 
-        ai_client = create_ai_client(self.config.ai)
+        ai_client = create_ai_client(self.config.ai.for_stage(AIStage.ANALYSIS))
         analyzer = ContentAnalyzer(ai_client)
 
         return await analyzer.analyze_batch(items)
