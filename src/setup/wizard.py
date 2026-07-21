@@ -16,7 +16,7 @@ from ..models import (
     AIConfig, AIProvider, AIStage, AI_PROVIDER_DEFAULTS, Config, FilteringConfig, SourcesConfig,
     GitHubSourceConfig, HackerNewsConfig, RSSSourceConfig,
     RedditConfig, RedditSubredditConfig, RedditUserConfig,
-    TelegramConfig, TelegramChannelConfig,
+    TelegramConfig, TelegramChannelConfig, GoogleNewsConfig,
 )
 from ..storage.manager import StorageManager
 from .presets import load_presets, match_sources
@@ -226,6 +226,7 @@ def build_config(
     reddit_subreddits = []
     reddit_users = []
     telegram_channels = []
+    google_news_config = None
     hn_enabled = False
 
     for src in selected_sources:
@@ -268,6 +269,14 @@ def build_config(
                 channel=cfg.get("channel", ""),
                 fetch_limit=cfg.get("fetch_limit", 20),
             ))
+        elif src_type == "google_news":
+            google_news_config = GoogleNewsConfig(
+                enabled=True,
+                query=cfg.get("query", "artificial intelligence"),
+                language=cfg.get("language", "en"),
+                country=cfg.get("country", "US"),
+                category=cfg.get("category"),
+            )
         elif src_type == "hackernews":
             hn_enabled = True
 
@@ -296,6 +305,7 @@ def build_config(
         rss=rss_sources,
         reddit=reddit_config,
         telegram=telegram_config,
+        google_news=google_news_config,
     )
 
     filtering = FilteringConfig(
@@ -496,10 +506,6 @@ def _count_sources(config: Config) -> int:
         count += len(config.sources.twitter.users)
     if config.sources.openbb and config.sources.openbb.enabled:
         count += len([s for s in config.sources.openbb.watchlists if s.enabled])
-    if config.sources.ossinsight.enabled:
-        count += 1
-    if config.sources.gdelt and config.sources.gdelt.enabled:
-        count += 1
     if config.sources.google_news and config.sources.google_news.enabled:
         count += 1
     return count

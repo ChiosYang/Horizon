@@ -70,21 +70,21 @@
 
 ## 为什么需要 Horizon？
 
-好新闻分散在各处，坏信息却源源不断。Horizon 为你先完成第一轮筛选：从 Hacker News、Reddit、Telegram、RSS、Twitter/X、GitHub 和 OpenBB 抓取内容，合并重复新闻，用 AI 打分过滤，并为重要内容补充背景解释和社区讨论。
+好新闻分散在各处，坏信息却源源不断。Horizon 为你先完成第一轮筛选：从 Hacker News、Reddit、Telegram、RSS、Twitter/X、GitHub、Google News 和 OpenBB 抓取内容，合并重复新闻，用 AI 打分过滤，并为重要内容补充背景解释和社区讨论。
 
 但 Horizon 不只是又一个摘要工具。AI 很擅长降低噪声，但新闻仍然需要人的品味：你信任哪些信息源，哪些评论改变了你对事件的理解，哪些小众来源值得被更多人看见。Horizon 通过可定制的信息源、筛选标准、模型、语言、分发方式、评论摘要和社区信息源官网，把这层“人味”保留下来。
 
 ## 功能特性
 
-- **📡 关注你的信息源** — 将 Hacker News、RSS、Reddit、Telegram、Twitter/X、GitHub Release / 用户动态，以及 OpenBB 金融新闻观察列表纳入同一条 pipeline
+- **📡 关注你的信息源** — 将 Hacker News、RSS、Reddit、Telegram、Twitter/X、GitHub Release / 用户动态、Google News 搜索，以及 OpenBB 金融新闻观察列表纳入同一条 pipeline
 - **🤖 把噪声变成阅读清单** — 使用 Claude、GPT、Gemini、DeepSeek、豆包、MiniMax 或任意 OpenAI 兼容 API，为每条内容评分 0-10
 - **🧭 为不同 AI 环节分配模型** — 可为评分、语义去重、背景补充、翻译和配置向导推荐分别指定模型或供应商
 - **🔗 合并重复新闻** — 在生成日报前自动合并来自不同平台的相同故事
 - **🔍 补全背景知识** — 为陌生概念、公司、项目和技术术语补充网络搜索得到的背景解释
 - **💬 读到社区声音** — 收集并总结 Hacker News、Reddit 等来源的评论讨论
 - **🌐 生成双语日报** — 基于同一组信息源生成英文和中文日报
-- **📝 发布日报站点** — 将生成的 Markdown 发布为 GitHub Pages 静态日报站点
-- **📧 邮件分发** — 运行自托管 SMTP/IMAP 邮件列表，自动处理订阅与退订
+- **📝 发布日报站点** — 可选地将生成的 Markdown 发布为 GitHub Pages 静态日报站点
+- **📧 邮件分发** — 通过 SMTP 将日报发送给配置中的固定收件人
 - **🔔 推送到聊天和自动化工具** — 将模板化结果发送到飞书、钉钉、Slack、Discord 或自定义 Webhook
 - **🧙 从兴趣开始配置** — 通过交互式向导根据你的兴趣生成个性化信息源配置
 - **⚙️ 调校你的新闻雷达** — 在单个 JSON 配置中定制信息源、阈值、模型、语言和分发方式
@@ -121,6 +121,7 @@ flowchart LR
          twitter["🐦 Twitter / X"]
          github["🐙 GitHub"]
          openbb["💹 OpenBB"]
+         google_news["🗞️ Google News"]
       end
 
     fetch["📥 抓取"]
@@ -145,6 +146,7 @@ flowchart LR
       twitter --> fetch
       github --> fetch
       openbb --> fetch
+      google_news --> fetch
 
     fetch --> dedup --> score --> enrich --> summary
     config --> score
@@ -332,6 +334,7 @@ Horizon 非常适合作为 **GitHub Actions** 定时任务运行。查看 [`.git
 | **Telegram** | 公开频道消息 | — |
 | **Twitter / X** | 特定用户的推文 | 支持（前 N 条回复） |
 | **GitHub** | 用户动态 & 仓库 Release | — |
+| **Google News** | 通过 Google News RSS 按关键词抓取近期新闻 | — |
 | **OpenBB** | 按观察列表 / provider 抓取金融公司新闻 | — |
 
 ## 日报可以去哪里
@@ -340,8 +343,8 @@ Horizon 支持通过多种方式发布和分发生成的日报：
 
 | 方式 | 作用 |
 |------|------|
-| **GitHub Pages 日报站点** | 将生成的 Markdown 复制到 `docs/`，通过 GitHub Pages 发布为每日更新的静态日报站点 |
-| **邮件订阅** | 通过 SMTP/IMAP 向订阅者发送日报，并自动处理订阅/退订请求 |
+| **GitHub Pages 日报站点** | 启用后将生成的 Markdown 复制到 `docs/`，通过 GitHub Pages 发布为每日更新的静态日报站点 |
+| **邮件分发** | 通过 SMTP 将日报发送给配置中的固定收件人 |
 | **Webhook 通知** | 在成功或失败时将结果推送到飞书、钉钉、Slack、Discord 或任意 Webhook 端点 |
 | **MCP Server** | 将抓取、打分、过滤、富化、摘要和完整 pipeline 暴露为工具，供 AI 助手调用 |
 

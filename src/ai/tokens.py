@@ -59,8 +59,3 @@ def get_usage_snapshot() -> TokenUsageSnapshot:
         total_output_tokens=total_out,
         per_provider=dict(_provider_usage),
     )
-
-
-def reset_usage() -> None:
-    """Reset all accumulated usage (useful for tests)."""
-    _provider_usage.clear()

@@ -39,6 +39,34 @@
         "owner": "triton-lang",
         "repo": "triton",
         "enabled": true
+      },
+      {
+        "type": "repo_releases",
+        "owner": "openai",
+        "repo": "openai-python",
+        "enabled": true,
+        "category": "ai-sdk"
+      },
+      {
+        "type": "repo_releases",
+        "owner": "anthropics",
+        "repo": "anthropic-sdk-python",
+        "enabled": true,
+        "category": "ai-sdk"
+      },
+      {
+        "type": "repo_releases",
+        "owner": "huggingface",
+        "repo": "transformers",
+        "enabled": true,
+        "category": "ai-tools"
+      },
+      {
+        "type": "repo_releases",
+        "owner": "ollama",
+        "repo": "ollama",
+        "enabled": true,
+        "category": "ai-tools"
       }
     ],
     "hackernews": {
@@ -54,12 +82,6 @@
         "category": "ai-tools"
       },
       {
-        "name": "GitHub Trending - Daily",
-        "url": "https://mshibanami.github.io/GitHubTrendingRSS/daily/all.xml",
-        "enabled": true,
-        "category": "github-trending"
-      },
-      {
         "name": "Semianalysis",
         "url": "https://newsletter.semianalysis.com/feed",
         "enabled": true,
@@ -70,6 +92,30 @@
         "url": "https://lwn.net/headlines/full_text?key=${LWN_KEY}",
         "enabled": true,
         "category": "linux-kernel"
+      },
+      {
+        "name": "OpenAI News",
+        "url": "https://openai.com/news/rss.xml",
+        "enabled": true,
+        "category": "ai-news"
+      },
+      {
+        "name": "Google DeepMind",
+        "url": "https://deepmind.google/blog/rss.xml",
+        "enabled": true,
+        "category": "ai-research"
+      },
+      {
+        "name": "Hugging Face Blog",
+        "url": "https://huggingface.co/blog/feed.xml",
+        "enabled": true,
+        "category": "ai-tools"
+      },
+      {
+        "name": "GitHub Trending - Daily",
+        "url": "https://mshibanami.github.io/GitHubTrendingRSS/daily/all.xml",
+        "enabled": true,
+        "category": "github-trending"
       }
     ],
     "reddit": {
@@ -106,6 +152,9 @@
       ]
     }
   },
+  "github_pages": {
+    "enabled": true
+  },
   "filtering": {
     "ai_score_threshold": 8.0,
     "time_window_hours": 24
@@ -117,7 +166,6 @@
     "overview_position": "last",
     "platform": "feishu",
     "layout": "collapsible",
-    "fallback_layout": "markdown",
     "languages": [
       "zh"
     ],

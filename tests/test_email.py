@@ -27,21 +27,13 @@ class FakeSMTP:
         self.messages.append(message)
 
 
-class FakeIMAP:
-    instances = []
-
-    def __init__(self, server, port):
-        FakeIMAP.instances.append((server, port))
-
-
 def _email_config(**overrides):
     data = {
         "enabled": True,
         "smtp_server": "smtp.example.com",
         "smtp_port": 465,
-        "imap_server": "imap.example.com",
-        "imap_port": 993,
         "email_address": "noreply@example.com",
+        "recipients": ["user@example.com"],
         "password_env": "EMAIL_PASSWORD",
     }
     data.update(overrides)
@@ -56,7 +48,7 @@ def test_send_daily_summary_uses_smtp_username_when_configured(monkeypatch):
     config = _email_config(smtp_username="resend")
     manager = EmailManager(config)
 
-    manager.send_daily_summary("# Hello", "Daily", ["user@example.com"])
+    manager.send_daily_summary("# Hello", "Daily")
 
     smtp = FakeSMTP.instances[0]
     assert smtp.login_calls == [("resend", "secret")]
@@ -74,7 +66,7 @@ def test_send_daily_summary_falls_back_to_email_address_for_smtp_login(monkeypat
     config = _email_config()
     manager = EmailManager(config)
 
-    manager.send_daily_summary("# Hello", "Daily", ["user@example.com"])
+    manager.send_daily_summary("# Hello", "Daily")
 
     assert FakeSMTP.instances[0].login_calls == [("noreply@example.com", "secret")]
 
@@ -86,9 +78,7 @@ def test_send_daily_summary_escapes_raw_html(monkeypatch):
 
     manager = EmailManager(_email_config())
 
-    manager.send_daily_summary(
-        "# Hello\n\n<img src=x onerror=alert(1)>", "Daily", ["user@example.com"]
-    )
+    manager.send_daily_summary("# Hello\n\n<img src=x onerror=alert(1)>", "Daily")
 
     html_part = FakeSMTP.instances[0].messages[0].get_payload()[1]
     html_body = html_part.get_payload(decode=True).decode()
@@ -116,7 +106,7 @@ def test_send_daily_summary_cleans_app_generated_markdown_html(monkeypatch):
 </details>
 """
 
-    manager.send_daily_summary(summary, "Daily", ["user@example.com"])
+    manager.send_daily_summary(summary, "Daily")
 
     message = FakeSMTP.instances[0].messages[0]
     text_body = message.get_payload()[0].get_payload(decode=True).decode()
@@ -151,7 +141,7 @@ def test_send_daily_summary_does_not_link_unsafe_details_href(monkeypatch):
 </details>
 """
 
-    manager.send_daily_summary(summary, "Daily", ["user@example.com"])
+    manager.send_daily_summary(summary, "Daily")
 
     message = FakeSMTP.instances[0].messages[0]
     text_body = message.get_payload()[0].get_payload(decode=True).decode()
@@ -163,14 +153,12 @@ def test_send_daily_summary_does_not_link_unsafe_details_href(monkeypatch):
     assert "click [me](https://evil.example)" in html_body
 
 
-def test_check_subscriptions_skips_imap_when_disabled(monkeypatch):
+def test_send_daily_summary_skips_smtp_without_recipients(monkeypatch):
     monkeypatch.setenv("EMAIL_PASSWORD", "secret")
-    monkeypatch.setattr("src.services.email.imaplib.IMAP4_SSL", FakeIMAP)
-    FakeIMAP.instances = []
+    monkeypatch.setattr("src.services.email.smtplib.SMTP_SSL", FakeSMTP)
+    FakeSMTP.instances = []
 
-    config = _email_config(imap_enabled=False)
-    manager = EmailManager(config)
+    manager = EmailManager(_email_config(recipients=[]))
+    manager.send_daily_summary("# Hello", "Daily")
 
-    manager.check_subscriptions(storage_manager=object())
-
-    assert FakeIMAP.instances == []
+    assert FakeSMTP.instances == []

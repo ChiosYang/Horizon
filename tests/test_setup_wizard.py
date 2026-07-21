@@ -70,6 +70,31 @@ def test_build_config_hackernews_follows_selection_and_count():
     assert wizard._count_sources(default_config) == 1
 
 
+def test_build_config_supports_google_news_recommendation():
+    ai = AIConfig(provider=AIProvider.OLLAMA, model="llama3.1", api_key_env="")
+
+    config = wizard.build_config(
+        ai,
+        [
+            {
+                "type": "google_news",
+                "config": {
+                    "query": "open source AI",
+                    "language": "en",
+                    "country": "GB",
+                    "category": "ai-news",
+                },
+            }
+        ],
+    )
+
+    assert config.sources.google_news is not None
+    assert config.sources.google_news.query == "open source AI"
+    assert config.sources.google_news.country == "GB"
+    assert config.sources.google_news.category == "ai-news"
+    assert wizard._count_sources(config) == 1
+
+
 def test_merge_configs_preserves_all_existing_configuration_and_deduplicates_lists():
     existing = Config.model_validate(
         {
@@ -85,9 +110,12 @@ def test_merge_configs_preserves_all_existing_configuration_and_deduplicates_lis
             },
             "filtering": {"ai_score_threshold": 3, "max_items": 9},
             "extractors": {"html": {"type": "trafilatura", "favor_precision": True}},
+            "github_pages": {"enabled": True},
             "email": {
-                "imap_server": "imap.example.com", "smtp_server": "smtp.example.com",
-                "email_address": "alerts@example.com", "enabled": True,
+                "smtp_server": "smtp.example.com",
+                "email_address": "alerts@example.com",
+                "recipients": ["reader@example.com"],
+                "enabled": True,
             },
             "webhook": {"url_env": "WEBHOOK_URL", "enabled": True},
             "sources": {
@@ -108,8 +136,6 @@ def test_merge_configs_preserves_all_existing_configuration_and_deduplicates_lis
                 },
                 "twitter": {"enabled": True, "users": ["openai"], "fetch_limit": 4},
                 "openbb": {"enabled": True, "watchlists": [{"name": "tech", "symbols": ["NVDA"]}]},
-                "ossinsight": {"enabled": True, "keywords": ["agent"], "max_items": 8},
-                "gdelt": {"enabled": True, "query": "robotics", "max_records": 13},
                 "google_news": {"enabled": True, "query": "semiconductors", "country": "GB"},
             },
         }
@@ -130,6 +156,7 @@ def test_merge_configs_preserves_all_existing_configuration_and_deduplicates_lis
 
     assert merged.version == existing.version
     assert merged.extractors == existing.extractors
+    assert merged.github_pages == existing.github_pages
     assert merged.email == existing.email
     assert merged.webhook == existing.webhook
     assert merged.ai.provider == new.ai.provider
@@ -137,7 +164,7 @@ def test_merge_configs_preserves_all_existing_configuration_and_deduplicates_lis
     assert merged.ai.api_key_env == new.ai.api_key_env
     assert merged.ai.stages == existing.ai.stages
     assert merged.filtering == new.filtering
-    for name in ("hackernews", "twitter", "openbb", "ossinsight", "gdelt", "google_news"):
+    for name in ("hackernews", "twitter", "openbb", "google_news"):
         assert getattr(merged.sources, name) == getattr(existing.sources, name)
     assert merged.sources.reddit.enabled is False
     assert merged.sources.reddit.fetch_comments == 42
