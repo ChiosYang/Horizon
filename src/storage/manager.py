@@ -126,34 +126,3 @@ class StorageManager:
         _atomic_write_text(filepath, markdown)
 
         return filepath
-
-    def load_subscribers(self) -> list:
-        """Loads the list of email subscribers."""
-        subscribers_path = self.data_dir / "subscribers.json"
-        if not subscribers_path.exists():
-            return []
-
-        try:
-            with open(subscribers_path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except json.JSONDecodeError:
-            return []
-
-    def add_subscriber(self, email_addr: str):
-        """Adds a new subscriber email."""
-        subscribers = self.load_subscribers()
-        if email_addr not in subscribers:
-            subscribers.append(email_addr)
-            self._save_subscribers(subscribers)
-
-    def remove_subscriber(self, email_addr: str):
-        """Removes a subscriber email."""
-        subscribers = self.load_subscribers()
-        if email_addr in subscribers:
-            subscribers.remove(email_addr)
-            self._save_subscribers(subscribers)
-
-    def _save_subscribers(self, subscribers: list):
-        """Helper to save subscribers list."""
-        subscribers_path = self.data_dir / "subscribers.json"
-        _atomic_write_text(subscribers_path, json.dumps(subscribers, indent=2))

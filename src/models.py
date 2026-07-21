@@ -17,8 +17,6 @@ class SourceType(str, Enum):
     TELEGRAM = "telegram"
     TWITTER = "twitter"
     OPENBB = "openbb"
-    OSSINSIGHT = "ossinsight"
-    GDELT = "gdelt"
     GOOGLE_NEWS = "google_news"
 
 
@@ -38,8 +36,6 @@ SOURCE_REGISTRY = {
     SourceType.TELEGRAM.value: SourceDefinition("telegram", item_fields=("channels",)),
     SourceType.TWITTER.value: SourceDefinition("twitter", item_fields=("users",)),
     SourceType.OPENBB.value: SourceDefinition("openbb", item_fields=("watchlists",)),
-    SourceType.OSSINSIGHT.value: SourceDefinition("ossinsight"),
-    SourceType.GDELT.value: SourceDefinition("gdelt"),
     SourceType.GOOGLE_NEWS.value: SourceDefinition("google_news"),
 }
 
@@ -374,48 +370,6 @@ class OpenBBConfig(BaseModel):
     filings_provider: str = "sec"
 
 
-class OSSInsightConfig(BaseModel):
-    """OSS Insight trending repos source configuration.
-
-    Pulls top star-gain repositories from the OSS Insight public API and
-    emits them as ContentItems. Optional `keywords` filter limits results
-    to repos whose description, repo name, or collection names contain at
-    least one of the listed substrings (case-insensitive). Leave
-    `keywords` empty to ingest everything trending in the configured
-    languages.
-    """
-
-    enabled: bool = False
-    period: str = "past_24_hours"  # past_24_hours, past_28_days
-    languages: List[str] = Field(
-        default_factory=lambda: ["All", "Python", "TypeScript"]
-    )
-    keywords: List[str] = Field(default_factory=list)
-    min_stars: int = 5
-    max_items: int = 30
-    category: Optional[str] = None
-
-
-class GDELTConfig(BaseModel):
-    """GDELT 2.0 DOC API source configuration.
-
-    Queries the key-less GDELT DOC API
-    (https://api.gdeltproject.org/api/v2/doc/doc) for recent news articles
-    matching a search query and emits them as ContentItems. No API key is
-    required. The DOC API caps results at 250 records per request, so keep
-    `max_records` modest.
-    """
-
-    enabled: bool = False
-    query: str = "artificial intelligence"
-    mode: str = "ArtList"
-    max_records: int = 75  # GDELT DOC API caps at 250; keep modest
-    timespan: Optional[str] = None  # e.g. "24h"; overrides since-derived window
-    language: Optional[str] = None  # sourcelang filter, e.g. "english"; None = no filter
-    country: Optional[str] = None  # sourcecountry filter; None = no filter
-    category: Optional[str] = None  # Horizon category label for downstream grouping
-
-
 class GoogleNewsConfig(BaseModel):
     """Google News RSS search source configuration.
 
@@ -443,8 +397,6 @@ class SourcesConfig(BaseModel):
     telegram: TelegramConfig = Field(default_factory=TelegramConfig)
     twitter: Optional[TwitterConfig] = None
     openbb: Optional[OpenBBConfig] = None
-    ossinsight: OSSInsightConfig = Field(default_factory=OSSInsightConfig)
-    gdelt: Optional[GDELTConfig] = None
     google_news: Optional[GoogleNewsConfig] = None
 
 
@@ -462,9 +414,6 @@ class WebhookConfig(BaseModel):
     overview_position: str = "first"  # For summary_and_items: first, or last
     platform: str = "generic"  # generic, feishu, lark, dingtalk, slack, discord
     layout: str = "markdown"  # markdown, or collapsible
-    fallback_layout: str = (
-        "markdown"  # Layout to use when the requested layout is unsupported
-    )
     languages: Optional[List[str]] = (
         None  # Optional language filter for webhook delivery; defaults to all AI languages
     )
@@ -494,16 +443,6 @@ class WebhookConfig(BaseModel):
             raise ValueError(f"webhook.layout must be one of {allowed}, got '{v}'")
         return v
 
-    @field_validator("fallback_layout")
-    @classmethod
-    def validate_fallback_layout(cls, v: str) -> str:
-        allowed = {"markdown", "collapsible"}
-        if v not in allowed:
-            raise ValueError(
-                f"webhook.fallback_layout must be one of {allowed}, got '{v}'"
-            )
-        return v
-
     @field_validator("overview_position")
     @classmethod
     def validate_overview_position(cls, v: str) -> str:
@@ -516,19 +455,21 @@ class WebhookConfig(BaseModel):
 
 
 class EmailConfig(BaseModel):
-    """Email configuration for updates/subscriptions."""
+    """SMTP configuration for sending summaries to fixed recipients."""
 
-    imap_server: str
-    imap_port: int = 993
-    imap_enabled: bool = True
     smtp_server: str
     smtp_port: int = 465
     smtp_username: Optional[str] = None
     email_address: str
+    recipients: List[str] = Field(default_factory=list)
     password_env: str = "EMAIL_PASSWORD"
     sender_name: str = "Horizon Daily"
-    subscribe_keyword: str = "SUBSCRIBE"
-    unsubscribe_keyword: str = "UNSUBSCRIBE"
+    enabled: bool = False
+
+
+class GitHubPagesConfig(BaseModel):
+    """Optional GitHub Pages publishing configuration."""
+
     enabled: bool = False
 
 
@@ -559,5 +500,6 @@ class Config(BaseModel):
     sources: SourcesConfig
     filtering: FilteringConfig
     extractors: Dict[str, ExtractorConfig] = Field(default_factory=dict)
+    github_pages: GitHubPagesConfig = Field(default_factory=GitHubPagesConfig)
     email: Optional[EmailConfig] = None
     webhook: Optional[WebhookConfig] = None

@@ -69,21 +69,21 @@
 
 ## Why Horizon?
 
-Good news is scattered; bad news is endless. Horizon gives you a personal first pass over Hacker News, Reddit, Telegram, RSS, and GitHub: it fetches, deduplicates, scores, filters, and enriches stories with background context and community discussion.
+Good news is scattered; bad news is endless. Horizon gives you a personal first pass over Hacker News, Reddit, Telegram, RSS, Twitter/X, GitHub, Google News, and OpenBB: it fetches, deduplicates, scores, filters, and enriches stories with background context and community discussion.
 
 But Horizon is not just another summarizer. AI is great at reducing noise, but news still needs human taste: the sources you trust, the comments that change how you read a story, and the hidden gems only people can share. Horizon keeps that human layer in the loop with customizable sources, thresholds, models, languages, delivery channels, comment summaries, and a community source hub.
 
 ## Features
 
-- **📡 Watch Your Own Sources** — Track Hacker News, RSS, Reddit, Telegram, Twitter/X, GitHub releases or user activity, and OpenBB financial news watchlists in one pipeline
+- **📡 Watch Your Own Sources** — Track Hacker News, RSS, Reddit, Telegram, Twitter/X, GitHub releases or user activity, Google News searches, and OpenBB financial news watchlists in one pipeline
 - **🤖 Turn Noise Into a Reading List** — Score each item from 0-10 with Claude, GPT, Gemini, DeepSeek, Doubao, MiniMax, Ollama, or any OpenAI-compatible API
 - **🧭 Route Each AI Stage** — Use different models or providers for scoring, semantic deduplication, enrichment, translation, and setup recommendations
 - **🔗 Merge Repeated Stories** — Deduplicate the same story across platforms before it reaches your briefing
 - **🔍 Understand the Background** — Add web-researched context for unfamiliar concepts, companies, projects, and technical terms
 - **💬 Read the Conversation** — Collect and summarize community comments from Hacker News, Reddit, and other supported sources
 - **🌐 Publish in Two Languages** — Generate English and Chinese daily briefings from the same source set
-- **📝 Ship a Daily Site** — Publish generated Markdown as a GitHub Pages daily briefing site
-- **📧 Deliver by Email** — Run a self-hosted SMTP/IMAP newsletter with automatic subscribe and unsubscribe handling
+- **📝 Ship a Daily Site** — Optionally publish generated Markdown as a GitHub Pages daily briefing site
+- **📧 Deliver by Email** — Send the briefing over SMTP to a fixed recipient list
 - **🔔 Push to Chat or Automations** — Send templated results to Feishu/Lark, DingTalk, Slack, Discord, or custom webhook endpoints
 - **🧙 Start From Your Interests** — Use the setup wizard to generate a personalized source configuration
 - **⚙️ Tune the Radar** — Customize sources, thresholds, models, languages, and delivery channels from one JSON config
@@ -120,6 +120,7 @@ flowchart LR
         twitter["🐦 Twitter / X"]
         github["🐙 GitHub"]
         openbb["💹 OpenBB"]
+        google_news["🗞️ Google News"]
     end
 
     fetch["📥 Fetch"]
@@ -144,6 +145,7 @@ flowchart LR
     twitter --> fetch
     github --> fetch
     openbb --> fetch
+    google_news --> fetch
 
     fetch --> dedup --> score --> enrich --> summary
     config --> score
@@ -343,6 +345,7 @@ Horizon works great as a **GitHub Actions** cron job. See [`.github/workflows/da
 | **Telegram** | Public channel messages | — |
 | **Twitter / X** | Tweets from specific users | Yes (top N replies) |
 | **GitHub** | User events & repo releases | — |
+| **Google News** | Query-based recent news through Google News RSS | — |
 | **OpenBB** | Financial company news by watchlist/provider | — |
 
 ## Where Your Briefing Goes
@@ -351,8 +354,8 @@ Horizon can publish or deliver the generated briefing in several ways:
 
 | Channel | What it does |
 |---------|--------------|
-| **GitHub Pages Daily Site** | Copies generated Markdown into `docs/` so GitHub Pages can publish a daily-updated briefing site |
-| **Email Subscription** | Sends the daily briefing to subscribers and handles subscribe/unsubscribe requests through SMTP/IMAP |
+| **GitHub Pages Daily Site** | When enabled, copies generated Markdown into `docs/` so GitHub Pages can publish a daily-updated briefing site |
+| **Email Delivery** | Sends the daily briefing over SMTP to recipients listed in the configuration |
 | **Webhook Notification** | Pushes success or failure results to Feishu/Lark, DingTalk, Slack, Discord, or any custom webhook endpoint |
 | **MCP Server** | Exposes Horizon pipeline steps as tools so AI assistants can fetch, score, filter, enrich, summarize, and run the full workflow |
 
