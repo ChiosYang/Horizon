@@ -860,6 +860,16 @@ The repository workflow in `.github/workflows/daily-summary.yml` uses `data/conf
 
 To publish the site, enable Pages for the repository and run the scheduled workflow or trigger it manually. The generated site is built from the `docs/` directory.
 
+## Performance Metrics
+
+Every native `horizon` run writes a structured JSON report to `data/metrics/`, including runs that return no content or fail after the orchestrator starts. Each report contains:
+
+- total run status, UTC timestamps, monotonic-clock duration, and Token usage;
+- pipeline-stage durations, statuses, input/output item counts, safe attributes, and per-provider Token deltas;
+- individual source-fetch durations, statuses, and output item counts.
+
+Metric filenames contain a UTC timestamp and random suffix, for example `horizon-performance-20260722T020000Z-a1b2c3d4.json`. Runtime reports are ignored by Git. The bundled GitHub Actions workflow uploads them after every run as a `horizon-performance-<run-id>` artifact with 14-day retention, including when the Horizon step fails.
+
 ## MCP Server
 
 Horizon includes an MCP server for AI assistants and MCP-compatible clients.
