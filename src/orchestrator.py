@@ -2,6 +2,7 @@
 
 import asyncio
 from collections import defaultdict
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -28,6 +29,7 @@ from .ai.analyzer import ContentAnalyzer
 from .ai.summarizer import DailySummarizer
 from .ai.enricher import ContentEnricher
 from .ai.tokens import get_usage_snapshot
+from .performance import PerformanceRecorder
 
 
 _TRACKING_QUERY_PARAMETERS = {
@@ -180,6 +182,8 @@ class HorizonOrchestrator:
             else None
         )
         self.last_fetch_report: Optional[FetchReport] = None
+        self.last_performance_report: Optional[Dict[str, object]] = None
+        self._performance_recorder: Optional[PerformanceRecorder] = None
 
     async def run(self, force_hours: int = None) -> None:
         """Execute the complete workflow.
@@ -187,26 +191,52 @@ class HorizonOrchestrator:
         Args:
             force_hours: Optional override for time window in hours
         """
+        recorder = PerformanceRecorder()
+        self._performance_recorder = recorder
+        run_status = "success"
+        run_error_type: Optional[str] = None
+
         self.console.print("[bold cyan]🌅 Horizon - Starting aggregation...[/bold cyan]\n")
 
         try:
             # 1. Determine time window
-            since = self._determine_time_window(force_hours)
+            with recorder.stage("determine_time_window") as measurement:
+                since = self._determine_time_window(force_hours)
+                measurement.set_result(
+                    since=since.isoformat(),
+                    force_hours=force_hours,
+                )
             self.console.print(f"📅 Fetching content since: {since.strftime('%Y-%m-%d %H:%M:%S')}\n")
 
             # 2. Fetch content from all sources
-            all_items = await self.fetch_all_sources(since)
+            with recorder.stage("fetch_sources") as measurement:
+                all_items = await self.fetch_all_sources(since)
+                fetch_status = (
+                    self.last_fetch_report.status
+                    if self.last_fetch_report is not None
+                    else "success"
+                )
+                measurement.set_result(
+                    status=fetch_status,
+                    output_items=len(all_items),
+                )
             self.console.print(f"📥 Fetched {len(all_items)} items from all sources\n")
 
             if self.last_fetch_report and self.last_fetch_report.all_failed:
                 raise RuntimeError(self.last_fetch_report.failure_message())
 
             if not all_items:
+                run_status = "no_content"
                 self.console.print("[yellow]No new content found. Exiting.[/yellow]")
                 return
 
             # 3. Merge cross-source duplicates (same URL from different sources)
-            merged_items = self.merge_cross_source_duplicates(all_items)
+            with recorder.stage(
+                "merge_cross_source_duplicates",
+                input_items=len(all_items),
+            ) as measurement:
+                merged_items = self.merge_cross_source_duplicates(all_items)
+                measurement.set_result(output_items=len(merged_items))
             if len(merged_items) < len(all_items):
                 self.console.print(
                     f"🔗 Merged {len(all_items) - len(merged_items)} cross-source duplicates "
@@ -214,21 +244,51 @@ class HorizonOrchestrator:
                 )
 
             # 4. Analyze with AI
-            analyzed_items = await self._analyze_content(merged_items)
+            with recorder.stage(
+                "analyze_content",
+                input_items=len(merged_items),
+            ) as measurement:
+                analyzed_items = await self._analyze_content(merged_items)
+                measurement.set_result(output_items=len(analyzed_items))
             self.console.print(f"🤖 Analyzed {len(analyzed_items)} items with AI\n")
 
             # 5. Filter, deduplicate, and balance the digest
-            filtering_result = await self.filter_items(
-                analyzed_items,
-                apply_balance=False,
-            )
+            with recorder.stage(
+                "filter_and_topic_deduplicate",
+                input_items=len(analyzed_items),
+            ) as measurement:
+                filtering_result = await self.filter_items(
+                    analyzed_items,
+                    apply_balance=False,
+                )
+                measurement.set_result(
+                    output_items=len(filtering_result.items),
+                    threshold_items=filtering_result.threshold_count,
+                    topic_deduplicated_items=filtering_result.topic_dedup_count,
+                    topic_duplicates_removed=filtering_result.topic_dedup_removed,
+                )
             important_items = filtering_result.items
 
             # 5.5 Optional second-stage Twitter reply expansion + targeted re-analysis
-            await self._expand_twitter_discussion(important_items)
+            with recorder.stage(
+                "expand_twitter_discussion",
+                input_items=len(important_items),
+            ) as measurement:
+                await self._expand_twitter_discussion(important_items)
+                measurement.set_result(output_items=len(important_items))
 
             # 5.6 Apply digest limits after any targeted re-analysis changes scores.
-            important_items = self.apply_balanced_digest(important_items).items
+            with recorder.stage(
+                "balance_digest",
+                input_items=len(important_items),
+            ) as measurement:
+                balanced_digest = self.apply_balanced_digest(important_items)
+                important_items = balanced_digest.items
+                measurement.set_result(
+                    output_items=len(important_items),
+                    enabled=balanced_digest.enabled,
+                    group_counts=balanced_digest.group_counts,
+                )
 
             # Show per-sub-source selection breakdown
             selected_counts: Dict[str, int] = defaultdict(int)
@@ -240,49 +300,98 @@ class HorizonOrchestrator:
             self.console.print("")
 
             # 6. Search related stories + enrich with background knowledge (2nd AI pass)
-            await self._enrich_important_items(important_items)
+            with recorder.stage(
+                "enrich_content",
+                input_items=len(important_items),
+            ) as measurement:
+                await self._enrich_important_items(important_items)
+                measurement.set_result(output_items=len(important_items))
 
             # 7. Generate and save daily summaries for each configured language
             today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
             for lang in self.config.ai.languages:
                 summarizer = DailySummarizer()
-                summary = await summarizer.generate_summary(important_items, today, len(all_items), language=lang)
+                with recorder.stage(
+                    "generate_summary",
+                    input_items=len(important_items),
+                    attributes={"language": lang},
+                ) as measurement:
+                    summary = await summarizer.generate_summary(
+                        important_items,
+                        today,
+                        len(all_items),
+                        language=lang,
+                    )
+                    measurement.set_result(
+                        output_items=len(important_items),
+                        summary_characters=len(summary),
+                    )
 
                 # Save to data/summaries/
-                summary_path = self.storage.save_daily_summary(today, summary, language=lang)
+                with recorder.stage(
+                    "save_summary",
+                    attributes={"language": lang},
+                ):
+                    summary_path = self.storage.save_daily_summary(
+                        today,
+                        summary,
+                        language=lang,
+                    )
                 self.console.print(f"💾 Saved {lang.upper()} summary to: {summary_path}\n")
 
                 # Copy to docs/ only when GitHub Pages publishing is enabled.
-                try:
-                    dest_path = self._publish_github_pages_summary(
-                        summary=summary,
-                        date=today,
-                        language=lang,
-                    )
-                    if dest_path is not None:
-                        self.console.print(
-                            f"📄 Copied {lang.upper()} summary to GitHub Pages: "
-                            f"{dest_path}\n"
+                with recorder.stage(
+                    "publish_github_pages",
+                    attributes={"language": lang},
+                ) as measurement:
+                    try:
+                        dest_path = self._publish_github_pages_summary(
+                            summary=summary,
+                            date=today,
+                            language=lang,
                         )
-                except Exception as e:
-                    self.console.print(f"[yellow]⚠️  Failed to copy {lang.upper()} summary to docs/: {e}[/yellow]\n")
+                    except Exception as e:
+                        measurement.mark_failure(e)
+                        self.console.print(
+                            f"[yellow]⚠️  Failed to copy {lang.upper()} summary "
+                            f"to docs/: {e}[/yellow]\n"
+                        )
+                    else:
+                        measurement.set_result(
+                            status="success" if dest_path is not None else "skipped"
+                        )
+                        if dest_path is not None:
+                            self.console.print(
+                                f"📄 Copied {lang.upper()} summary to GitHub Pages: "
+                                f"{dest_path}\n"
+                            )
 
                 # Send email if configured
                 if self.email_manager and self.config.email and self.config.email.enabled:
                     self.console.print(f"📧 Sending {lang.upper()} email summary...")
                     subject = f"Horizon Summary ({lang.upper()}) - {today}"
-                    self.email_manager.send_daily_summary(summary, subject)
+                    with recorder.stage(
+                        "send_email",
+                        attributes={"language": lang},
+                    ):
+                        self.email_manager.send_daily_summary(summary, subject)
 
                 # Send webhook notification if configured
                 if self.webhook_notifier:
-                    await self.webhook_notifier.send_daily_summary(
-                        summary=summary,
-                        important_items=important_items,
-                        all_items_count=len(all_items),
-                        date=today,
-                        lang=lang,
-                        summarizer=summarizer,
-                    )
+                    with recorder.stage(
+                        "send_webhook",
+                        input_items=len(important_items),
+                        attributes={"language": lang},
+                    ) as measurement:
+                        await self.webhook_notifier.send_daily_summary(
+                            summary=summary,
+                            important_items=important_items,
+                            all_items_count=len(all_items),
+                            date=today,
+                            lang=lang,
+                            summarizer=summarizer,
+                        )
+                        measurement.set_result(output_items=len(important_items))
 
             self.console.print("[bold green]✅ Horizon completed successfully![/bold green]")
             usage = get_usage_snapshot()
@@ -301,16 +410,69 @@ class HorizonOrchestrator:
                     )
 
         except Exception as e:
+            run_status = "failure"
+            run_error_type = type(e).__name__
             self.console.print(f"[bold red]❌ Error: {e}[/bold red]")
 
             # Send webhook failure notification if configured
             if self.webhook_notifier:
-                await self.webhook_notifier.send_failure(
-                    date=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-                    error_message=str(e),
-                )
+                with recorder.stage("send_failure_webhook"):
+                    await self.webhook_notifier.send_failure(
+                        date=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                        error_message=str(e),
+                    )
 
             raise
+        finally:
+            recorder.finish(run_status, error_type=run_error_type)
+            report = recorder.to_dict()
+            self.last_performance_report = report
+            self._print_performance_summary(recorder)
+            self._save_performance_report(recorder, report)
+            self._performance_recorder = None
+
+    def _print_performance_summary(self, recorder: PerformanceRecorder) -> None:
+        """Print a concise stage timing summary for the completed run."""
+
+        self.console.print("\n[bold cyan]⏱ Performance summary[/bold cyan]")
+        for metric in recorder.stages:
+            count_label = ""
+            if metric.input_items is not None or metric.output_items is not None:
+                input_label = "-" if metric.input_items is None else metric.input_items
+                output_label = "-" if metric.output_items is None else metric.output_items
+                count_label = f" | items {input_label}→{output_label}"
+            token_label = ""
+            if metric.tokens.total_tokens:
+                token_label = f" | tokens {metric.tokens.total_tokens}"
+            self.console.print(
+                f"   • {metric.name}: {metric.duration_ms / 1000:.2f}s "
+                f"[{metric.status}]{count_label}{token_label}"
+            )
+        self.console.print(
+            f"   • total: {(recorder.duration_ms or 0) / 1000:.2f}s "
+            f"[{recorder.status}]"
+        )
+
+    def _save_performance_report(
+        self,
+        recorder: PerformanceRecorder,
+        report: Dict[str, object],
+    ) -> None:
+        """Persist metrics when supported without affecting run success."""
+
+        storage = getattr(self, "storage", None)
+        save_report = getattr(storage, "save_performance_report", None)
+        if not callable(save_report):
+            return
+        try:
+            metrics_path = save_report(recorder.run_id, report)
+        except Exception as exc:
+            self.console.print(
+                f"[yellow]⚠️  Failed to save performance report: "
+                f"{type(exc).__name__}: {exc}[/yellow]"
+            )
+            return
+        self.console.print(f"📈 Saved performance report to: {metrics_path}\n")
 
     def _determine_time_window(self, force_hours: int = None) -> datetime:
         if force_hours:
@@ -443,33 +605,44 @@ class HorizonOrchestrator:
         Returns:
             SourceFetchOutcome: Named fetch result and diagnostics
         """
-        self.console.print(f"🔍 Fetching from {name}...")
-        try:
-            items = await scraper.fetch(since)
-        except Exception as exc:
-            error = f"{type(exc).__name__}: {exc}"
-            self.console.print(f"[red]   Failed to fetch {name}: {error}[/red]")
+        recorder = getattr(self, "_performance_recorder", None)
+        measurement_context = (
+            recorder.source_fetch(name) if recorder is not None else nullcontext()
+        )
+        with measurement_context as measurement:
+            self.console.print(f"🔍 Fetching from {name}...")
+            try:
+                items = await scraper.fetch(since)
+            except Exception as exc:
+                error = f"{type(exc).__name__}: {exc}"
+                if measurement is not None:
+                    measurement.mark_failure(exc)
+                    measurement.set_result(output_items=0)
+                self.console.print(f"[red]   Failed to fetch {name}: {error}[/red]")
+                return SourceFetchOutcome(
+                    source_name=name,
+                    status="failure",
+                    error=error,
+                )
+
+            status = "success" if items else "empty"
+            if measurement is not None:
+                measurement.set_result(status=status, output_items=len(items))
+            self.console.print(f"   Found {len(items)} items from {name}")
+
+            # Show per-sub-source breakdown when there are multiple sub-sources
+            sub_counts: Dict[str, int] = defaultdict(int)
+            for item in items:
+                sub_counts[self._sub_source_label(item)] += 1
+            if len(sub_counts) > 1:
+                for sub, count in sorted(sub_counts.items()):
+                    self.console.print(f"      • {sub}: {count}")
+
             return SourceFetchOutcome(
                 source_name=name,
-                status="failure",
-                error=error,
+                status=status,
+                items=items,
             )
-
-        self.console.print(f"   Found {len(items)} items from {name}")
-
-        # Show per-sub-source breakdown when there are multiple sub-sources
-        sub_counts: Dict[str, int] = defaultdict(int)
-        for item in items:
-            sub_counts[self._sub_source_label(item)] += 1
-        if len(sub_counts) > 1:
-            for sub, count in sorted(sub_counts.items()):
-                self.console.print(f"      • {sub}: {count}")
-
-        return SourceFetchOutcome(
-            source_name=name,
-            status="success" if items else "empty",
-            items=items,
-        )
 
     @staticmethod
     def _sub_source_label(item: ContentItem) -> str:
