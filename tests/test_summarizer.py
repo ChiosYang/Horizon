@@ -140,6 +140,30 @@ def test_generate_empty_summary_zh_uses_localized_analyzed_line():
     assert "Analyzed 10 items" not in result
 
 
+def test_generate_summary_uses_domain_heading_for_items_and_empty_digest():
+    summarizer = DailySummarizer()
+
+    populated = _run_async(
+        summarizer.generate_summary(
+            [_make_item(1)],
+            date="2026-04-25",
+            total_fetched=10,
+            heading="AI News",
+        )
+    )
+    empty = _run_async(
+        summarizer.generate_summary(
+            [],
+            date="2026-04-25",
+            total_fetched=10,
+            heading="AI News",
+        )
+    )
+
+    assert populated.startswith("# AI News - 2026-04-25")
+    assert empty.startswith("# AI News - 2026-04-25")
+
+
 def test_generate_summary_escapes_untrusted_text_in_all_output_contexts():
     summarizer = DailySummarizer()
     item = _make_item(1)

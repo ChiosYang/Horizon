@@ -121,8 +121,20 @@ class StorageManager:
 
         return self.config_path
 
-    def save_daily_summary(self, date: str, markdown: str, language: str = "en") -> Path:
-        filename = f"horizon-{date}-{language}.md"
+    def save_daily_summary(
+        self,
+        date: str,
+        markdown: str,
+        language: str = "en",
+        domain: str | None = None,
+    ) -> Path:
+        if domain is not None and not re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9_-]*",
+            domain,
+        ):
+            raise ValueError(f"Invalid summary domain: {domain!r}")
+        domain_part = f"-{domain}" if domain else ""
+        filename = f"horizon-{date}{domain_part}-{language}.md"
         filepath = safe_output_path(self.summaries_dir, filename)
 
         _atomic_write_text(filepath, markdown)

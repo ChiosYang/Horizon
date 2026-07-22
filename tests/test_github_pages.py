@@ -54,3 +54,28 @@ def test_github_pages_writes_jekyll_post_when_enabled(tmp_path, monkeypatch):
     assert 'title: "Horizon Summary: 2026-07-21 (ZH)"' in content
     assert "# Daily" not in content
     assert content.endswith("Body")
+
+
+def test_github_pages_uses_domain_specific_post_name_and_metadata(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.chdir(tmp_path)
+    orchestrator = HorizonOrchestrator(
+        _config(pages_enabled=True),
+        StorageManager(data_dir=str(tmp_path / "data")),
+    )
+
+    result = orchestrator._publish_github_pages_summary(
+        summary="# AI News\n\nBody",
+        date="2026-07-21",
+        language="en",
+        domain="ai",
+        domain_name="AI News",
+    )
+
+    expected = tmp_path / "docs/_posts/2026-07-21-summary-ai-en.md"
+    assert result == expected
+    content = expected.read_text(encoding="utf-8")
+    assert 'title: "Horizon AI News Summary: 2026-07-21 (EN)"' in content
+    assert 'domain: "ai"' in content

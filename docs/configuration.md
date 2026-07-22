@@ -590,6 +590,82 @@ If the same category appears in multiple groups, Horizon logs a warning and uses
 the first group in configuration order. Omitting both `category_groups` and
 `max_items` preserves the previous filtering behavior.
 
+## Parallel Domain Pipelines
+
+Horizon can split the shared fetched and URL-deduplicated item set into
+independent news domains. Each enabled domain runs analysis, score filtering,
+topic deduplication, balancing, enrichment, and summary generation as an
+isolated pipeline. A failure in one domain does not discard successful sibling
+digests.
+
+```json
+{
+  "ai": {
+    "analysis_concurrency": 2,
+    "enrichment_concurrency": 2,
+    "total_concurrency": 4,
+    "search_concurrency": 3
+  },
+  "domain_concurrency": 3,
+  "domains": {
+    "ai": {
+      "name": "AI News",
+      "categories": ["ai-news", "ai-tools", "machine-learning", "llm"],
+      "score_threshold": 7.0,
+      "max_items": 10,
+      "languages": ["en", "zh"],
+      "analysis_guidance": "Prioritize material model, research, and infrastructure changes.",
+      "enrichment_guidance": "Explain technical tradeoffs and ecosystem impact."
+    },
+    "economy": {
+      "name": "Economy",
+      "categories": ["economy", "finance", "equities", "crypto"]
+    },
+    "entertainment": {
+      "name": "Entertainment",
+      "categories": ["entertainment", "movies", "music", "gaming"]
+    },
+    "general": {
+      "name": "General News",
+      "categories": [],
+      "default": true
+    }
+  }
+}
+```
+
+- `domains`: Optional map keyed by a filesystem-safe domain identifier. If this
+  map is omitted or empty, Horizon keeps the original single serial pipeline.
+- `domains.*.categories`: Source categories routed to the domain. A category may
+  appear in multiple domains; Horizon deep-copies the item so the pipelines can
+  enrich it independently.
+- `domains.*.default`: Exactly one enabled domain must be the default. Items with
+  a missing or unmatched category are sent there, so routing never silently
+  drops content.
+- `domains.*.score_threshold` and `domains.*.max_items`: Optional per-domain
+  overrides. Omitted values inherit `filtering.ai_score_threshold` and
+  `filtering.max_items`.
+- `domains.*.languages`: Optional per-domain output languages. Omitted values
+  inherit `ai.languages`.
+- `domains.*.analysis_guidance` and `domains.*.enrichment_guidance`: Optional
+  instructions appended to that domain's AI prompts.
+- `domain_concurrency`: Maximum number of domain pipelines running at once.
+- `ai.total_concurrency`: Shared upper bound for in-flight AI requests across
+  all domains. If omitted, Horizon uses the larger of `analysis_concurrency` and
+  `enrichment_concurrency`.
+- `ai.search_concurrency`: Shared upper bound for enrichment web searches across
+  all domains.
+
+Source fetching and exact URL deduplication still happen once before routing.
+Domain routing uses `ContentItem.metadata.category`, populated from each
+source's `category` setting. Topic deduplication remains domain-local, which
+allows the same story to be selected independently for different audiences.
+
+Domain summaries use isolated filenames such as
+`data/summaries/horizon-2026-07-22-ai-en.md`. When GitHub Pages is enabled, the
+corresponding post is `docs/_posts/2026-07-22-summary-ai-en.md`. Email subjects
+and webhook titles also include the domain display name.
+
 ## Environment Variable Substitution
 
 Any string value in `data/config.json` supports `${VAR_NAME}` syntax. Variables are expanded at runtime from the environment (including values loaded from `.env`). This lets you keep secrets, tenant-specific endpoints, and private URLs out of the checked-in JSON file.
@@ -867,6 +943,12 @@ Every native `horizon` run writes a structured JSON report to `data/metrics/`, i
 - total run status, UTC timestamps, monotonic-clock duration, and Token usage;
 - pipeline-stage durations, statuses, input/output item counts, safe attributes, and per-provider Token deltas;
 - individual source-fetch durations, statuses, and output item counts.
+- when domains are configured, per-domain stage durations and domain outcomes,
+  including isolated failures and selected item counts.
+
+Because domain stages overlap, their individual token fields remain zero to
+avoid double-counting shared process-wide usage. The enclosing
+`process_domains` stage and run total contain the aggregate Token delta.
 
 Metric filenames contain a UTC timestamp and random suffix, for example `horizon-performance-20260722T020000Z-a1b2c3d4.json`. Runtime reports are ignored by Git. The bundled GitHub Actions workflow uploads them after every run as a `horizon-performance-<run-id>` artifact with 14-day retention, including when the Horizon step fails.
 

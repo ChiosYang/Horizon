@@ -1,6 +1,7 @@
 """Main orchestrator coordinating the entire workflow."""
 
 import asyncio
+import json
 from collections import defaultdict
 from contextlib import nullcontext
 from dataclasses import dataclass, field
@@ -11,7 +12,12 @@ from urllib.parse import unquote_plus, urlsplit
 import httpx
 from rich.console import Console
 
-from .models import AIStage, Config, ContentItem
+from .models import AIStage, Config, ContentItem, DomainConfig, FilteringConfig
+from .domains import (
+    DomainPipeline,
+    DomainPipelineResult,
+    DomainRouter,
+)
 from .storage.manager import StorageManager, safe_output_path
 from .services.email import EmailManager
 from .services.webhook import WebhookNotifier
@@ -183,7 +189,10 @@ class HorizonOrchestrator:
         )
         self.last_fetch_report: Optional[FetchReport] = None
         self.last_performance_report: Optional[Dict[str, object]] = None
+        self.last_domain_results: List[DomainPipelineResult] = []
         self._performance_recorder: Optional[PerformanceRecorder] = None
+        self._domain_ai_semaphore: Optional[asyncio.Semaphore] = None
+        self._domain_search_semaphore: Optional[asyncio.Semaphore] = None
 
     async def run(self, force_hours: int = None) -> None:
         """Execute the complete workflow.
@@ -193,6 +202,7 @@ class HorizonOrchestrator:
         """
         recorder = PerformanceRecorder()
         self._performance_recorder = recorder
+        self.last_domain_results = []
         run_status = "success"
         run_error_type: Optional[str] = None
 
@@ -242,6 +252,83 @@ class HorizonOrchestrator:
                     f"🔗 Merged {len(all_items) - len(merged_items)} cross-source duplicates "
                     f"→ {len(merged_items)} unique items\n"
                 )
+
+            if self.config.domains:
+                with recorder.stage(
+                    "route_domains",
+                    input_items=len(merged_items),
+                ) as measurement:
+                    routing = DomainRouter(self.config.domains).route(merged_items)
+                    measurement.set_result(
+                        output_items=routing.routed_items,
+                        domains=len(routing.assignments),
+                        multi_domain_items=routing.multi_domain_items,
+                    )
+                self.console.print(
+                    f"🧭 Routed {len(merged_items)} unique items into "
+                    f"{len(routing.assignments)} domains "
+                    f"({routing.routed_items} assignments)\n"
+                )
+
+                with recorder.stage(
+                    "process_domains",
+                    input_items=routing.routed_items,
+                ) as measurement:
+                    domain_results = await self._run_domain_pipelines(
+                        routing.assignments,
+                        recorder,
+                    )
+                    self.last_domain_results = domain_results
+                    processing_failures = sum(
+                        result.status == "failure" for result in domain_results
+                    )
+                    if processing_failures == len(domain_results):
+                        domain_status = "failure"
+                    elif processing_failures:
+                        domain_status = "partial_failure"
+                    else:
+                        domain_status = "success"
+                    measurement.set_result(
+                        status=domain_status,
+                        output_items=sum(
+                            result.selected_items
+                            for result in domain_results
+                            if result.status != "failure"
+                        ),
+                        succeeded=len(domain_results) - processing_failures,
+                        failed=processing_failures,
+                    )
+
+                today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                await self._publish_domain_results(
+                    domain_results,
+                    today=today,
+                    all_items_count=len(all_items),
+                    recorder=recorder,
+                )
+
+                failures = [
+                    result for result in domain_results
+                    if result.status == "failure"
+                ]
+                if len(failures) == len(domain_results):
+                    failed_names = ", ".join(result.domain for result in failures)
+                    raise RuntimeError(
+                        f"All configured domain pipelines failed: {failed_names}"
+                    )
+                if failures:
+                    run_status = "partial_success"
+                    self.console.print(
+                        f"[yellow]⚠️  Horizon completed with "
+                        f"{len(failures)} failed domain(s).[/yellow]"
+                    )
+                else:
+                    self.console.print(
+                        "[bold green]✅ Horizon completed all domains successfully!"
+                        "[/bold green]"
+                    )
+                self._print_token_usage()
+                return
 
             # 4. Analyze with AI
             with recorder.stage(
@@ -394,20 +481,7 @@ class HorizonOrchestrator:
                         measurement.set_result(output_items=len(important_items))
 
             self.console.print("[bold green]✅ Horizon completed successfully![/bold green]")
-            usage = get_usage_snapshot()
-            if usage.total_tokens > 0:
-                self.console.print(
-                    f"\n🧮 Token usage this run: "
-                    f"{usage.total_tokens} tokens "
-                    f"(input: {usage.total_input_tokens}, output: {usage.total_output_tokens})"
-                )
-                for provider, u in sorted(usage.per_provider.items()):
-                    if u.total <= 0:
-                        continue
-                    self.console.print(
-                        f"   • {provider}: {u.total} tokens "
-                        f"(in: {u.input_tokens}, out: {u.output_tokens})"
-                    )
+            self._print_token_usage()
 
         except Exception as e:
             run_status = "failure"
@@ -426,10 +500,259 @@ class HorizonOrchestrator:
         finally:
             recorder.finish(run_status, error_type=run_error_type)
             report = recorder.to_dict()
+            if self.last_domain_results:
+                report["domains"] = [
+                    result.to_dict() for result in self.last_domain_results
+                ]
             self.last_performance_report = report
             self._print_performance_summary(recorder)
             self._save_performance_report(recorder, report)
             self._performance_recorder = None
+            self._domain_ai_semaphore = None
+            self._domain_search_semaphore = None
+
+    async def _run_domain_pipelines(
+        self,
+        assignments: Dict[str, List[ContentItem]],
+        recorder: PerformanceRecorder,
+    ) -> List[DomainPipelineResult]:
+        """Run enabled domain pipelines concurrently with shared budgets."""
+        total_ai_concurrency = self.config.ai.total_concurrency or max(
+            self.config.ai.analysis_concurrency,
+            self.config.ai.enrichment_concurrency,
+        )
+        self._domain_ai_semaphore = asyncio.Semaphore(total_ai_concurrency)
+        self._domain_search_semaphore = asyncio.Semaphore(
+            self.config.ai.search_concurrency
+        )
+        domain_semaphore = asyncio.Semaphore(self.config.domain_concurrency)
+
+        pipelines = [
+            DomainPipeline(
+                domain=domain,
+                config=domain_config,
+                domain_semaphore=domain_semaphore,
+                analyze=self._analyze_content,
+                filter_items=self._filter_domain_items,
+                expand_discussion=self._expand_twitter_discussion,
+                balance=self._balance_domain_items,
+                enrich=self._enrich_important_items,
+                recorder=recorder,
+            )
+            for domain, domain_config in self.config.domains.items()
+            if domain_config.enabled
+        ]
+        results = await asyncio.gather(
+            *(
+                pipeline.run(assignments.get(pipeline.domain, []))
+                for pipeline in pipelines
+            )
+        )
+
+        for result in results:
+            if result.status == "failure":
+                self.console.print(
+                    f"   [red]✗ {result.name}: failed "
+                    f"({result.error_type or 'unknown error'})[/red]"
+                )
+            else:
+                self.console.print(
+                    f"   [green]✓ {result.name}: "
+                    f"{result.routed_items} routed → "
+                    f"{result.selected_items} selected[/green]"
+                )
+        self.console.print("")
+        return results
+
+    async def _filter_domain_items(
+        self,
+        items: List[ContentItem],
+        domain_config: DomainConfig,
+    ) -> FilteringPipelineResult:
+        threshold = (
+            domain_config.score_threshold
+            if domain_config.score_threshold is not None
+            else self.config.filtering.ai_score_threshold
+        )
+        return await self.filter_items(
+            items,
+            threshold=threshold,
+            apply_balance=False,
+            log=False,
+            ai_semaphore=self._domain_ai_semaphore,
+        )
+
+    def _balance_domain_items(
+        self,
+        items: List[ContentItem],
+        domain_config: DomainConfig,
+    ) -> BalancedDigestResult:
+        max_items = (
+            domain_config.max_items
+            if domain_config.max_items is not None
+            else self.config.filtering.max_items
+        )
+        filtering: FilteringConfig = self.config.filtering.model_copy(
+            update={"max_items": max_items}
+        )
+        return self.apply_balanced_digest(
+            items,
+            filtering=filtering,
+            log=False,
+        )
+
+    async def _publish_domain_results(
+        self,
+        results: List[DomainPipelineResult],
+        *,
+        today: str,
+        all_items_count: int,
+        recorder: PerformanceRecorder,
+    ) -> None:
+        """Generate and publish one independent digest per successful domain."""
+
+        publish_semaphore = asyncio.Semaphore(self.config.domain_concurrency)
+
+        async def publish_one(result: DomainPipelineResult) -> None:
+            if result.status == "failure":
+                return
+
+            domain_config = self.config.domains[result.domain]
+            languages = domain_config.languages or self.config.ai.languages
+            try:
+                for language in languages:
+                    summarizer = DailySummarizer()
+                    attributes = {"language": language}
+                    with recorder.domain_stage(
+                        result.domain,
+                        "generate_summary",
+                        input_items=len(result.items),
+                        attributes=attributes,
+                    ) as measurement:
+                        summary = await summarizer.generate_summary(
+                            result.items,
+                            today,
+                            all_items_count,
+                            language=language,
+                            heading=result.name,
+                        )
+                        measurement.set_result(
+                            output_items=len(result.items),
+                            summary_characters=len(summary),
+                        )
+
+                    with recorder.domain_stage(
+                        result.domain,
+                        "save_summary",
+                        attributes=attributes,
+                    ):
+                        summary_path = self.storage.save_daily_summary(
+                            today,
+                            summary,
+                            language=language,
+                            domain=result.domain,
+                        )
+                    self.console.print(
+                        f"💾 Saved {result.name} {language.upper()} summary to: "
+                        f"{summary_path}"
+                    )
+
+                    with recorder.domain_stage(
+                        result.domain,
+                        "publish_github_pages",
+                        attributes=attributes,
+                    ) as measurement:
+                        try:
+                            dest_path = self._publish_github_pages_summary(
+                                summary=summary,
+                                date=today,
+                                language=language,
+                                domain=result.domain,
+                                domain_name=result.name,
+                            )
+                        except Exception as exc:
+                            measurement.mark_failure(exc)
+                            self.console.print(
+                                f"[yellow]⚠️  Failed to copy {result.name} "
+                                f"{language.upper()} summary to docs/: {exc}[/yellow]"
+                            )
+                        else:
+                            measurement.set_result(
+                                status=(
+                                    "success" if dest_path is not None else "skipped"
+                                )
+                            )
+
+                    if (
+                        self.email_manager
+                        and self.config.email
+                        and self.config.email.enabled
+                    ):
+                        subject = (
+                            f"Horizon {result.name} Summary "
+                            f"({language.upper()}) - {today}"
+                        )
+                        with recorder.domain_stage(
+                            result.domain,
+                            "send_email",
+                            attributes=attributes,
+                        ):
+                            await asyncio.to_thread(
+                                self.email_manager.send_daily_summary,
+                                summary,
+                                subject,
+                            )
+
+                    if self.webhook_notifier:
+                        with recorder.domain_stage(
+                            result.domain,
+                            "send_webhook",
+                            input_items=len(result.items),
+                            attributes=attributes,
+                        ) as measurement:
+                            await self.webhook_notifier.send_daily_summary(
+                                summary=summary,
+                                important_items=result.items,
+                                all_items_count=all_items_count,
+                                date=today,
+                                lang=language,
+                                summarizer=summarizer,
+                                domain_name=result.name,
+                            )
+                            measurement.set_result(output_items=len(result.items))
+            except Exception as exc:
+                result.status = "failure"
+                result.error_type = type(exc).__name__
+                self.console.print(
+                    f"[red]✗ Failed to publish {result.name}: "
+                    f"{type(exc).__name__}: {exc}[/red]"
+                )
+
+        async def publish(result: DomainPipelineResult) -> None:
+            async with publish_semaphore:
+                await publish_one(result)
+
+        await asyncio.gather(*(publish(result) for result in results))
+        self.console.print("")
+
+    def _print_token_usage(self) -> None:
+        usage = get_usage_snapshot()
+        if usage.total_tokens <= 0:
+            return
+        self.console.print(
+            f"\n🧮 Token usage this run: "
+            f"{usage.total_tokens} tokens "
+            f"(input: {usage.total_input_tokens}, "
+            f"output: {usage.total_output_tokens})"
+        )
+        for provider, provider_usage in sorted(usage.per_provider.items()):
+            if provider_usage.total <= 0:
+                continue
+            self.console.print(
+                f"   • {provider}: {provider_usage.total} tokens "
+                f"(in: {provider_usage.input_tokens}, "
+                f"out: {provider_usage.output_tokens})"
+            )
 
     def _print_performance_summary(self, recorder: PerformanceRecorder) -> None:
         """Print a concise stage timing summary for the completed run."""
@@ -447,6 +770,12 @@ class HorizonOrchestrator:
             self.console.print(
                 f"   • {metric.name}: {metric.duration_ms / 1000:.2f}s "
                 f"[{metric.status}]{count_label}{token_label}"
+            )
+        for metric in recorder.domain_stages:
+            domain = metric.attributes.get("domain", "unknown")
+            self.console.print(
+                f"   • {domain}/{metric.name}: "
+                f"{metric.duration_ms / 1000:.2f}s [{metric.status}]"
             )
         self.console.print(
             f"   • total: {(recorder.duration_ms or 0) / 1000:.2f}s "
@@ -488,22 +817,31 @@ class HorizonOrchestrator:
         summary: str,
         date: str,
         language: str,
+        domain: Optional[str] = None,
+        domain_name: Optional[str] = None,
     ) -> Optional[Path]:
         """Write a Jekyll post when GitHub Pages publishing is enabled."""
         if not self.config.github_pages.enabled:
             return None
 
-        post_filename = f"{date}-summary-{language}.md"
+        domain_part = f"-{domain}" if domain else ""
+        post_filename = f"{date}-summary{domain_part}-{language}.md"
         posts_dir = Path("docs/_posts")
         posts_dir.mkdir(parents=True, exist_ok=True)
         dest_path = safe_output_path(posts_dir, post_filename)
 
+        title_prefix = f"Horizon {domain_name}" if domain_name else "Horizon"
+        page_title = f"{title_prefix} Summary: {date} ({language.upper()})"
+        domain_front_matter = (
+            f"domain: {json.dumps(domain)}\n" if domain else ""
+        )
         front_matter = (
             "---\n"
             "layout: default\n"
-            f"title: \"Horizon Summary: {date} ({language.upper()})\"\n"
+            f"title: {json.dumps(page_title, ensure_ascii=False)}\n"
             f"date: {date}\n"
             f"lang: {language}\n"
+            f"{domain_front_matter}"
             "---\n\n"
         )
 
@@ -720,6 +1058,7 @@ class HorizonOrchestrator:
         items: List[ContentItem],
         *,
         log: bool = True,
+        ai_semaphore: Optional[asyncio.Semaphore] = None,
     ) -> List[ContentItem]:
         """Merge items covering the same topic using AI semantic deduplication.
 
@@ -750,10 +1089,17 @@ class HorizonOrchestrator:
             ai_client = create_ai_client(
                 self.config.ai.for_stage(AIStage.DEDUPLICATION)
             )
-            response = await ai_client.complete(
-                system=TOPIC_DEDUP_SYSTEM,
-                user=TOPIC_DEDUP_USER.format(items=items_text),
-            )
+            if ai_semaphore is None:
+                response = await ai_client.complete(
+                    system=TOPIC_DEDUP_SYSTEM,
+                    user=TOPIC_DEDUP_USER.format(items=items_text),
+                )
+            else:
+                async with ai_semaphore:
+                    response = await ai_client.complete(
+                        system=TOPIC_DEDUP_SYSTEM,
+                        user=TOPIC_DEDUP_USER.format(items=items_text),
+                    )
             result = parse_json_response(response)
             if result is None:
                 if log:
@@ -806,6 +1152,7 @@ class HorizonOrchestrator:
         topic_dedup: bool = True,
         apply_balance: bool = True,
         log: bool = True,
+        ai_semaphore: Optional[asyncio.Semaphore] = None,
     ) -> FilteringPipelineResult:
         """Apply score thresholding, optional topic dedup, and digest balancing."""
         effective_threshold = (
@@ -827,7 +1174,17 @@ class HorizonOrchestrator:
 
         deduped_items = threshold_items
         if topic_dedup and deduped_items:
-            deduped_items = await self.merge_topic_duplicates(deduped_items, log=log)
+            if ai_semaphore is None:
+                deduped_items = await self.merge_topic_duplicates(
+                    deduped_items,
+                    log=log,
+                )
+            else:
+                deduped_items = await self.merge_topic_duplicates(
+                    deduped_items,
+                    log=log,
+                    ai_semaphore=ai_semaphore,
+                )
         topic_dedup_removed = len(threshold_items) - len(deduped_items)
 
         if log and topic_dedup_removed:
@@ -853,6 +1210,7 @@ class HorizonOrchestrator:
         self,
         items: List[ContentItem],
         *,
+        filtering: Optional[FilteringConfig] = None,
         log: bool = True,
     ) -> BalancedDigestResult:
         """Apply configured category quotas and the final item cap.
@@ -861,7 +1219,7 @@ class HorizonOrchestrator:
         appears in more than one configured group, the first group in config
         order wins.
         """
-        filtering = self.config.filtering
+        filtering = filtering or self.config.filtering
         groups = filtering.category_groups
         max_items = filtering.max_items
 
@@ -959,7 +1317,12 @@ class HorizonOrchestrator:
             duplicate_categories=sorted(set(duplicate_categories)),
         )
 
-    async def _expand_twitter_discussion(self, items: List[ContentItem]) -> None:
+    async def _expand_twitter_discussion(
+        self,
+        items: List[ContentItem],
+        domain_key: Optional[str] = None,
+        domain_config: Optional[DomainConfig] = None,
+    ) -> None:
         """Second-stage: fetch reply text for important Twitter items and re-analyze.
 
         Only runs when sources.twitter.fetch_reply_text is True.
@@ -1011,10 +1374,25 @@ class HorizonOrchestrator:
             f"   Re-analyzing {len(expanded)} Twitter items with reply context...\n"
         )
         ai_client = create_ai_client(self.config.ai.for_stage(AIStage.ANALYSIS))
-        analyzer = ContentAnalyzer(ai_client)
+        if domain_key is None:
+            analyzer = ContentAnalyzer(ai_client)
+        else:
+            analyzer = ContentAnalyzer(
+                ai_client,
+                semaphore=self._domain_ai_semaphore,
+                domain_guidance=(
+                    domain_config.analysis_guidance if domain_config else None
+                ),
+                show_progress=False,
+            )
         await analyzer.analyze_batch(expanded)
 
-    async def _enrich_important_items(self, items: List[ContentItem]) -> None:
+    async def _enrich_important_items(
+        self,
+        items: List[ContentItem],
+        domain_key: Optional[str] = None,
+        domain_config: Optional[DomainConfig] = None,
+    ) -> None:
         """Enrich items with background knowledge (2nd AI pass).
 
         For each item that passed the score threshold, call AI to generate
@@ -1031,14 +1409,33 @@ class HorizonOrchestrator:
         translation_client = create_ai_client(
             self.config.ai.for_stage(AIStage.TRANSLATION)
         )
-        enricher = ContentEnricher(
-            ai_client,
-            translation_client=translation_client,
-        )
+        if domain_key is None:
+            enricher = ContentEnricher(
+                ai_client,
+                translation_client=translation_client,
+            )
+        else:
+            enricher = ContentEnricher(
+                ai_client,
+                translation_client=translation_client,
+                semaphore=self._domain_ai_semaphore,
+                search_semaphore=self._domain_search_semaphore,
+                domain_guidance=(
+                    domain_config.enrichment_guidance
+                    if domain_config
+                    else None
+                ),
+                show_progress=False,
+            )
         await enricher.enrich_batch(items)
         self.console.print(f"   Enriched {len(items)} items\n")
 
-    async def _analyze_content(self, items: List[ContentItem]) -> List[ContentItem]:
+    async def _analyze_content(
+        self,
+        items: List[ContentItem],
+        domain_key: Optional[str] = None,
+        domain_config: Optional[DomainConfig] = None,
+    ) -> List[ContentItem]:
         """Analyze content items with AI.
 
         Args:
@@ -1050,6 +1447,16 @@ class HorizonOrchestrator:
         self.console.print("🤖 Analyzing content with AI...")
 
         ai_client = create_ai_client(self.config.ai.for_stage(AIStage.ANALYSIS))
-        analyzer = ContentAnalyzer(ai_client)
+        if domain_key is None:
+            analyzer = ContentAnalyzer(ai_client)
+        else:
+            analyzer = ContentAnalyzer(
+                ai_client,
+                semaphore=self._domain_ai_semaphore,
+                domain_guidance=(
+                    domain_config.analysis_guidance if domain_config else None
+                ),
+                show_progress=False,
+            )
 
         return await analyzer.analyze_batch(items)

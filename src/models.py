@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from enum import Enum
 import re
 from typing import Annotated, Literal, Optional, List, Dict, Any, NamedTuple, Union
-from pydantic import BaseModel, HttpUrl, Field, field_validator
+from pydantic import BaseModel, HttpUrl, Field, field_validator, model_validator
 
 
 class SourceType(str, Enum):
@@ -149,6 +149,8 @@ class AIStageConfig(BaseModel):
     throttle_sec: Optional[float] = None
     analysis_concurrency: Optional[int] = None
     enrichment_concurrency: Optional[int] = None
+    total_concurrency: Optional[int] = None
+    search_concurrency: Optional[int] = None
     azure_endpoint_env: Optional[str] = None
     api_version: Optional[str] = None
 
@@ -164,8 +166,10 @@ class AIConfig(BaseModel):
     temperature: float = 0.3
     max_tokens: int = 4096
     throttle_sec: float = 0.0
-    analysis_concurrency: int = 1
-    enrichment_concurrency: int = 1
+    analysis_concurrency: int = Field(default=1, gt=0)
+    enrichment_concurrency: int = Field(default=1, gt=0)
+    total_concurrency: Optional[int] = Field(default=None, gt=0)
+    search_concurrency: int = Field(default=5, gt=0)
     languages: List[str] = Field(default_factory=lambda: ["en"])
     stages: Dict[AIStage, AIStageConfig] = Field(default_factory=dict)
     # Azure OpenAI specific; required when provider == AZURE
@@ -492,6 +496,47 @@ class FilteringConfig(BaseModel):
     default_group_limit: Optional[int] = Field(default=None, gt=0)
 
 
+class DomainConfig(BaseModel):
+    """One independently processed news domain."""
+
+    enabled: bool = True
+    name: Optional[str] = None
+    categories: List[str] = Field(default_factory=list)
+    default: bool = False
+    score_threshold: Optional[float] = Field(default=None, ge=0, le=10)
+    max_items: Optional[int] = Field(default=None, gt=0)
+    languages: Optional[List[str]] = None
+    analysis_guidance: Optional[str] = None
+    enrichment_guidance: Optional[str] = None
+
+    @field_validator("categories")
+    @classmethod
+    def validate_categories(cls, categories: List[str]) -> List[str]:
+        normalized: List[str] = []
+        for category in categories:
+            value = category.strip()
+            if not value:
+                raise ValueError("domain categories must not be empty")
+            if value not in normalized:
+                normalized.append(value)
+        return normalized
+
+    @field_validator("languages")
+    @classmethod
+    def validate_languages(cls, languages: Optional[List[str]]) -> Optional[List[str]]:
+        if languages is None:
+            return None
+        language_tag = re.compile(r"^[A-Za-z]{2,8}(?:[-_][A-Za-z0-9]{1,8})*$")
+        invalid = [
+            language
+            for language in languages
+            if not language_tag.fullmatch(language)
+        ]
+        if invalid:
+            raise ValueError(f"invalid domain language code: {invalid[0]!r}")
+        return languages
+
+
 class Config(BaseModel):
     """Main configuration model."""
 
@@ -499,7 +544,29 @@ class Config(BaseModel):
     ai: AIConfig
     sources: SourcesConfig
     filtering: FilteringConfig
+    domains: Dict[str, DomainConfig] = Field(default_factory=dict)
+    domain_concurrency: int = Field(default=3, gt=0)
     extractors: Dict[str, ExtractorConfig] = Field(default_factory=dict)
     github_pages: GitHubPagesConfig = Field(default_factory=GitHubPagesConfig)
     email: Optional[EmailConfig] = None
     webhook: Optional[WebhookConfig] = None
+
+    @model_validator(mode="after")
+    def validate_domains(self) -> "Config":
+        if not self.domains:
+            return self
+
+        domain_key = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
+        invalid = [key for key in self.domains if not domain_key.fullmatch(key)]
+        if invalid:
+            raise ValueError(f"invalid domain key: {invalid[0]!r}")
+
+        enabled = [domain for domain in self.domains.values() if domain.enabled]
+        if not enabled:
+            raise ValueError("at least one configured domain must be enabled")
+        defaults = [domain for domain in enabled if domain.default]
+        if len(defaults) != 1:
+            raise ValueError(
+                "configured domains require exactly one enabled default domain"
+            )
+        return self
