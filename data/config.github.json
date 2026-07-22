@@ -112,6 +112,12 @@
         "category": "ai-tools"
       },
       {
+        "name": "BBC Technology",
+        "url": "https://feeds.bbci.co.uk/news/technology/rss.xml",
+        "enabled": true,
+        "category": "authoritative-tech"
+      },
+      {
         "name": "GitHub Trending - Daily",
         "url": "https://mshibanami.github.io/GitHubTrendingRSS/daily/all.xml",
         "enabled": true,
@@ -150,6 +156,15 @@
           "fetch_limit": 20
         }
       ]
+    },
+    "google_news": {
+      "enabled": true,
+      "query": "site:reuters.com (\"artificial intelligence\" OR semiconductor OR technology OR cybersecurity)",
+      "language": "en",
+      "country": "US",
+      "ceid": "US:en",
+      "max_results": 10,
+      "category": "reuters"
     }
   },
   "github_pages": {
