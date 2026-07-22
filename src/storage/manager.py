@@ -5,7 +5,7 @@ import os
 import re
 import shutil
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict
 
 from pydantic import ValidationError
 
@@ -67,9 +67,11 @@ class StorageManager:
         self.data_dir = Path(data_dir)
         self.config_path = self.data_dir / "config.json"
         self.summaries_dir = self.data_dir / "summaries"
+        self.metrics_dir = self.data_dir / "metrics"
 
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.summaries_dir.mkdir(parents=True, exist_ok=True)
+        self.metrics_dir.mkdir(parents=True, exist_ok=True)
 
     def load_config(self) -> Config:
         if not self.config_path.exists():
@@ -125,4 +127,15 @@ class StorageManager:
 
         _atomic_write_text(filepath, markdown)
 
+        return filepath
+
+    def save_performance_report(self, run_id: str, report: Dict[str, Any]) -> Path:
+        """Atomically persist one structured performance report."""
+
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", run_id):
+            raise ValueError(f"Invalid performance run id: {run_id!r}")
+        filename = f"horizon-performance-{run_id}.json"
+        filepath = safe_output_path(self.metrics_dir, filename)
+        content = json.dumps(report, indent=2, ensure_ascii=False)
+        _atomic_write_text(filepath, f"{content}\n")
         return filepath

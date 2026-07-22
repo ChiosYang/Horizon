@@ -57,5 +57,11 @@ def get_usage_snapshot() -> TokenUsageSnapshot:
     return TokenUsageSnapshot(
         total_input_tokens=total_in,
         total_output_tokens=total_out,
-        per_provider=dict(_provider_usage),
+        per_provider={
+            provider: ProviderUsage(
+                input_tokens=usage.input_tokens,
+                output_tokens=usage.output_tokens,
+            )
+            for provider, usage in _provider_usage.items()
+        },
     )

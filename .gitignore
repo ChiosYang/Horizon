@@ -44,6 +44,7 @@ data/subscribers.json
 data/mcp.secrets.json
 data/mcp-secrets.json
 data/mcp-runs/
+data/metrics/*.json
 data/x_cookies_*.json
 
 docs/_posts/*.md
