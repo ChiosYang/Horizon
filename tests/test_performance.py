@@ -72,7 +72,7 @@ def test_recorder_tracks_counts_attributes_and_stage_token_delta() -> None:
     recorder.finish("success")
     report = recorder.to_dict()
 
-    assert report["schema_version"] == 1
+    assert report["schema_version"] == 2
     assert report["status"] == "success"
     assert report["tokens"]["total_tokens"] == 16
     stage = report["stages"][0]
@@ -99,6 +99,27 @@ def test_recorder_marks_unhandled_stage_exception() -> None:
     assert report["error_type"] == "ValueError"
     assert report["stages"][0]["status"] == "failure"
     assert report["stages"][0]["error_type"] == "ValueError"
+
+
+def test_domain_stage_records_domain_without_double_counting_tokens() -> None:
+    recorder = PerformanceRecorder(run_id="domain-run")
+
+    with recorder.domain_stage(
+        "ai",
+        "analyze_content",
+        input_items=3,
+        attributes={"language": "en"},
+    ) as measurement:
+        record_usage("performance-domain-test", input_tokens=5, output_tokens=2)
+        measurement.set_result(output_items=3)
+
+    recorder.finish("success")
+    report = recorder.to_dict()
+    metric = report["domain_stages"][0]
+
+    assert metric["attributes"] == {"language": "en", "domain": "ai"}
+    assert metric["tokens"]["total_tokens"] == 0
+    assert report["tokens"]["total_tokens"] == 7
 
 
 def test_storage_saves_performance_report_atomically(tmp_path) -> None:

@@ -363,28 +363,32 @@ class WebhookNotifier:
         all_items_count: int,
         date: str,
         lang: str,
+        domain_name: Optional[str] = None,
     ) -> str:
         """Build a non-redundant overview for a card that already lists item panels."""
+        heading = domain_name or (
+            "Horizon 每日速递" if lang == "zh" else "Horizon Daily"
+        )
         if lang == "zh":
             if item_count == 0:
                 return (
-                    f"# Horizon 每日速递 - {date}\n\n"
+                    f"# {heading} - {date}\n\n"
                     f"> 已分析 {all_items_count} 条内容，暂无达到重要性阈值的资讯。"
                 )
             return (
-                f"# Horizon 每日速递 - {date}\n\n"
+                f"# {heading} - {date}\n\n"
                 f"> 从 {all_items_count} 条内容中筛选出 {item_count} 条重要资讯。\n\n"
                 "点击下方新闻面板即可在飞书内展开阅读全文。"
             )
 
         if item_count == 0:
             return (
-                f"# Horizon Daily - {date}\n\n"
+                f"# {heading} - {date}\n\n"
                 f"> Analyzed {all_items_count} items, but none met the importance threshold."
             )
 
         return (
-            f"# Horizon Daily - {date}\n\n"
+            f"# {heading} - {date}\n\n"
             f"> Selected {item_count} important items from {all_items_count} fetched items.\n\n"
             "Expand the panels below to read the full briefing inside Feishu/Lark."
         )
@@ -396,6 +400,7 @@ class WebhookNotifier:
         date: str,
         lang: str,
         summarizer: DailySummarizer,
+        domain_name: Optional[str] = None,
     ) -> dict[str, Any]:
         """Build a single Feishu Card JSON 2.0 message with collapsed item details."""
         overview = self._build_feishu_collapsible_overview(
@@ -403,6 +408,7 @@ class WebhookNotifier:
             all_items_count=all_items_count,
             date=date,
             lang=lang,
+            domain_name=domain_name,
         )
         elements: list[dict[str, Any]] = [_markdown(overview)]
 
@@ -423,6 +429,7 @@ class WebhookNotifier:
                 )
             )
 
+        title_prefix = f"Horizon {domain_name}" if domain_name else "Horizon"
         return {
             "msg_type": "interactive",
             "card": {
@@ -435,9 +442,9 @@ class WebhookNotifier:
                     "title": {
                         "tag": "plain_text",
                         "content": (
-                            f"Horizon {date} 折叠日报"
+                            f"{title_prefix} {date} 折叠日报"
                             if lang == "zh"
-                            else f"Horizon {date} Collapsible Daily"
+                            else f"{title_prefix} {date} Collapsible Daily"
                         ),
                     },
                     "template": "blue",
@@ -465,6 +472,7 @@ class WebhookNotifier:
         date: str,
         lang: str,
         summarizer: DailySummarizer,
+        domain_name: Optional[str] = None,
     ) -> List[dict[str, Any]]:
         """Build the variables for all webhook messages for one language."""
         webhook_languages = getattr(self.config, "languages", None)
@@ -477,17 +485,19 @@ class WebhookNotifier:
             "important_items": len(important_items),
             "all_items": all_items_count,
             "result": "success",
+            "domain": domain_name or "",
             "timestamp": str(int(datetime.now(timezone.utc).timestamp())),
         }
+        title_prefix = f"Horizon {domain_name}" if domain_name else "Horizon"
 
         if self._can_use_feishu_collapsible():
             return [
                 {
                     **base_vars,
                     "message_title": (
-                        f"Horizon {date} 折叠日报"
+                        f"{title_prefix} {date} 折叠日报"
                         if lang == "zh"
-                        else f"Horizon {date} Collapsible Daily"
+                        else f"{title_prefix} {date} Collapsible Daily"
                     ),
                     "message_kind": "collapsible",
                     "summary": self._build_feishu_collapsible_overview(
@@ -495,6 +505,7 @@ class WebhookNotifier:
                         all_items_count=all_items_count,
                         date=date,
                         lang=lang,
+                        domain_name=domain_name,
                     ),
                     "_request_body_override": self._build_feishu_collapsible_body(
                         important_items=important_items,
@@ -502,6 +513,7 @@ class WebhookNotifier:
                         date=date,
                         lang=lang,
                         summarizer=summarizer,
+                        domain_name=domain_name,
                     ),
                 }
             ]
@@ -514,13 +526,14 @@ class WebhookNotifier:
                 date,
                 all_items_count,
                 language=lang,
+                heading=domain_name,
             )
             overview_message = {
                 **base_vars,
                 "message_title": (
-                    f"Horizon {date} 总览"
+                    f"{title_prefix} {date} 总览"
                     if lang == "zh"
-                    else f"Horizon {date} Overview"
+                    else f"{title_prefix} {date} Overview"
                 ),
                 "message_kind": "overview",
                 "summary": overview,
@@ -536,7 +549,10 @@ class WebhookNotifier:
                 item_messages.append(
                     {
                         **base_vars,
-                        "message_title": f"{item_index}/{len(important_items)} {title}",
+                        "message_title": (
+                            f"{domain_name + ' ' if domain_name else ''}"
+                            f"{item_index}/{len(important_items)} {title}"
+                        ),
                         "message_kind": "item",
                         "item_index": item_index,
                         "item_count": len(important_items),
@@ -556,7 +572,9 @@ class WebhookNotifier:
             {
                 **base_vars,
                 "message_title": (
-                    f"Horizon {date} 日报" if lang == "zh" else f"Horizon {date} Daily"
+                    f"{title_prefix} {date} 日报"
+                    if lang == "zh"
+                    else f"{title_prefix} {date} Daily"
                 ),
                 "message_kind": "summary",
                 "summary": summary,
@@ -778,6 +796,7 @@ class WebhookNotifier:
         date: str,
         lang: str,
         summarizer: DailySummarizer,
+        domain_name: Optional[str] = None,
     ) -> None:
         """Send daily summary webhook notification.
 
@@ -799,6 +818,7 @@ class WebhookNotifier:
             date=date,
             lang=lang,
             summarizer=summarizer,
+            domain_name=domain_name,
         )
         if not messages:
             self.console.print(

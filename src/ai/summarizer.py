@@ -101,6 +101,7 @@ class DailySummarizer:
         date: str,
         total_fetched: int,
         language: str = "en",
+        heading: Optional[str] = None,
     ) -> str:
         """Generate daily summary in Markdown format.
 
@@ -118,10 +119,16 @@ class DailySummarizer:
         labels = LABELS.get(language, LABELS["en"])
 
         if not items:
-            return self._generate_empty_summary(date, total_fetched, labels)
+            return self._generate_empty_summary(
+                date,
+                total_fetched,
+                labels,
+                heading=heading,
+            )
 
+        header_label = _escape_markdown(heading) if heading else labels["header"]
         header = (
-            f"# {labels['header']} - {date}\n\n"
+            f"# {header_label} - {date}\n\n"
             f"> {labels['selected_items'].format(total=total_fetched, selected=len(items))}\n\n"
             "---\n\n"
         )
@@ -147,21 +154,28 @@ class DailySummarizer:
         date: str,
         total_fetched: int,
         language: str = "en",
+        heading: Optional[str] = None,
     ) -> str:
         """Generate a compact overview for multi-message webhook delivery."""
         labels = LABELS.get(language, LABELS["en"])
         if not items:
-            return self._generate_empty_summary(date, total_fetched, labels)
+            return self._generate_empty_summary(
+                date,
+                total_fetched,
+                labels,
+                heading=heading,
+            )
 
+        header_label = _escape_markdown(heading) if heading else labels["header"]
         if language == "zh":
             header = (
-                f"# {labels['header']} - {date}\n\n"
+                f"# {header_label} - {date}\n\n"
                 f"> 从 {total_fetched} 条内容中筛选出 {len(items)} 条重要资讯。\n\n"
                 "下面会按新闻逐条发送详情，你可以只看感兴趣的标题。\n\n"
             )
         else:
             header = (
-                f"# {labels['header']} - {date}\n\n"
+                f"# {header_label} - {date}\n\n"
                 f"> Selected {len(items)} important items from {total_fetched} fetched items.\n\n"
                 "Details will be sent item by item so you can read only the topics you care about.\n\n"
             )
@@ -293,10 +307,18 @@ class DailySummarizer:
 
         return "\n".join(lines) + "\n\n"
 
-    def _generate_empty_summary(self, date: str, total_fetched: int, labels: dict) -> str:
+    def _generate_empty_summary(
+        self,
+        date: str,
+        total_fetched: int,
+        labels: dict,
+        *,
+        heading: Optional[str] = None,
+    ) -> str:
         """Generate summary when no high-scoring items were found."""
+        header_label = _escape_markdown(heading) if heading else labels["header"]
         return (
-            f"# {labels['header']} - {date}\n\n"
+            f"# {header_label} - {date}\n\n"
             f"> {labels['empty_analyzed'].format(total=total_fetched)}\n\n"
             + labels["empty_body"]
         )

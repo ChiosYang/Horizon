@@ -107,6 +107,7 @@ class PerformanceMeasurement:
         destination: str,
         input_items: Optional[int] = None,
         attributes: Optional[Dict[str, Any]] = None,
+        capture_tokens: bool = True,
     ) -> None:
         self.recorder = recorder
         self.name = name
@@ -114,6 +115,7 @@ class PerformanceMeasurement:
         self.input_items = input_items
         self.output_items: Optional[int] = None
         self.attributes = dict(attributes or {})
+        self.capture_tokens = capture_tokens
         self.status = "success"
         self.error_type: Optional[str] = None
         self._started_at: Optional[datetime] = None
@@ -123,7 +125,8 @@ class PerformanceMeasurement:
     def __enter__(self) -> "PerformanceMeasurement":
         self._started_at = _utc_now()
         self._started_monotonic = perf_counter()
-        self._usage_before = get_usage_snapshot()
+        if self.capture_tokens:
+            self._usage_before = get_usage_snapshot()
         return self
 
     def set_result(
@@ -155,7 +158,7 @@ class PerformanceMeasurement:
             self.mark_failure(exc)
 
         completed_at = _utc_now()
-        usage_after = get_usage_snapshot()
+        usage_after = get_usage_snapshot() if self.capture_tokens else None
         metric = PerformanceMetric(
             name=self.name,
             started_at=_format_utc(self._started_at),
@@ -169,7 +172,11 @@ class PerformanceMeasurement:
             output_items=self.output_items,
             error_type=self.error_type,
             attributes=self.attributes,
-            tokens=token_usage_delta(self._usage_before, usage_after),
+            tokens=(
+                token_usage_delta(self._usage_before, usage_after)
+                if self._usage_before is not None and usage_after is not None
+                else TokenUsageDelta()
+            ),
         )
         self.recorder._record(metric, destination=self.destination)
         return False
@@ -178,7 +185,7 @@ class PerformanceMeasurement:
 class PerformanceRecorder:
     """Collect structured performance data for one Horizon run."""
 
-    schema_version = 1
+    schema_version = 2
 
     def __init__(self, run_id: Optional[str] = None) -> None:
         started_at = _utc_now()
@@ -194,6 +201,7 @@ class PerformanceRecorder:
         self.error_type: Optional[str] = None
         self.stages: list[PerformanceMetric] = []
         self.source_fetches: list[PerformanceMetric] = []
+        self.domain_stages: list[PerformanceMetric] = []
         self.tokens = TokenUsageDelta()
 
     def stage(
@@ -219,9 +227,30 @@ class PerformanceRecorder:
             attributes={"source": source_name},
         )
 
+    def domain_stage(
+        self,
+        domain: str,
+        name: str,
+        *,
+        input_items: Optional[int] = None,
+        attributes: Optional[Dict[str, Any]] = None,
+    ) -> PerformanceMeasurement:
+        domain_attributes = dict(attributes or {})
+        domain_attributes["domain"] = domain
+        return PerformanceMeasurement(
+            self,
+            name,
+            destination="domain_stages",
+            input_items=input_items,
+            attributes=domain_attributes,
+            capture_tokens=False,
+        )
+
     def _record(self, metric: PerformanceMetric, *, destination: str) -> None:
         if destination == "source_fetches":
             self.source_fetches.append(metric)
+        elif destination == "domain_stages":
+            self.domain_stages.append(metric)
         else:
             self.stages.append(metric)
 
@@ -254,5 +283,8 @@ class PerformanceRecorder:
             "stages": [metric.to_dict() for metric in self.stages],
             "source_fetches": [
                 metric.to_dict() for metric in self.source_fetches
+            ],
+            "domain_stages": [
+                metric.to_dict() for metric in self.domain_stages
             ],
         }

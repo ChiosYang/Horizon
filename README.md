@@ -290,6 +290,42 @@ results. Categories come from source configuration such as
 Group limits are applied after AI score filtering and before enrichment. If
 `category_groups` and `max_items` are omitted, filtering behaves as before.
 
+**Parallel domain digests (optional)**
+
+Fetch and URL-deduplicate once, then run independent AI, economy,
+entertainment, or other domain pipelines concurrently:
+
+```jsonc
+{
+  "ai": {
+    "total_concurrency": 4,
+    "search_concurrency": 3
+  },
+  "domain_concurrency": 3,
+  "domains": {
+    "ai": {
+      "name": "AI News",
+      "categories": ["ai-news", "ai-tools", "machine-learning"]
+    },
+    "economy": {
+      "name": "Economy",
+      "categories": ["finance", "business", "equities"]
+    },
+    "general": {
+      "name": "General News",
+      "categories": [],
+      "default": true
+    }
+  }
+}
+```
+
+Exactly one enabled domain must be the default for uncategorized content.
+Each domain produces its own files, email subject, webhook title, and
+performance stages. Omitting `domains` preserves the original serial flow.
+See the [Configuration Guide](docs/configuration.md#parallel-domain-pipelines)
+for per-domain thresholds, limits, languages, and prompt guidance.
+
 `api_key_env` must be the name of an environment variable, not the API key
 itself. Put the real secret in `.env`:
 

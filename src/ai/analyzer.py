@@ -28,8 +28,18 @@ class AnalysisResult(BaseModel):
 class ContentAnalyzer:
     """Analyzes content items using AI to determine importance."""
 
-    def __init__(self, ai_client: AIClient):
+    def __init__(
+        self,
+        ai_client: AIClient,
+        *,
+        semaphore: Optional[asyncio.Semaphore] = None,
+        domain_guidance: Optional[str] = None,
+        show_progress: bool = True,
+    ) -> None:
         self.client = ai_client
+        self.semaphore = semaphore
+        self.domain_guidance = domain_guidance.strip() if domain_guidance else None
+        self.show_progress = show_progress
 
     @staticmethod
     def _parse_json_response(response: str) -> Optional[dict]:
@@ -76,6 +86,7 @@ class ContentAnalyzer:
             BarColumn(),
             MofNCompleteColumn(),
             transient=True,
+            disable=not self.show_progress,
         ) as progress:
             task = progress.add_task("Analyzing", total=len(items))
             coros = [
@@ -150,10 +161,24 @@ class ContentAnalyzer:
         )
 
         # Get AI completion
-        response = await self.client.complete(
-            system=CONTENT_ANALYSIS_SYSTEM,
-            user=user_prompt,
-        )
+        system_prompt = CONTENT_ANALYSIS_SYSTEM
+        if self.domain_guidance:
+            system_prompt += (
+                "\n\nDomain-specific analysis guidance:\n"
+                f"{self.domain_guidance}"
+            )
+
+        if self.semaphore is None:
+            response = await self.client.complete(
+                system=system_prompt,
+                user=user_prompt,
+            )
+        else:
+            async with self.semaphore:
+                response = await self.client.complete(
+                    system=system_prompt,
+                    user=user_prompt,
+                )
 
         # Parse JSON response with robust fallback
         parsed = self._parse_json_response(response)

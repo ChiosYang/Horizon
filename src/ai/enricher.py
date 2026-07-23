@@ -8,8 +8,6 @@ For items that pass the score threshold, this module:
 import asyncio
 import json
 import re
-import sys
-import os
 from typing import List, Optional
 from tenacity import retry, stop_after_attempt, wait_exponential
 from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, MofNCompleteColumn
@@ -31,9 +29,18 @@ class ContentEnricher:
         self,
         ai_client: AIClient,
         translation_client: Optional[AIClient] = None,
-    ):
+        *,
+        semaphore: Optional[asyncio.Semaphore] = None,
+        search_semaphore: Optional[asyncio.Semaphore] = None,
+        domain_guidance: Optional[str] = None,
+        show_progress: bool = True,
+    ) -> None:
         self.client = ai_client
         self.translation_client = translation_client or ai_client
+        self.semaphore = semaphore
+        self.search_semaphore = search_semaphore
+        self.domain_guidance = domain_guidance.strip() if domain_guidance else None
+        self.show_progress = show_progress
 
     def _get_concurrency(self) -> int:
         """Return the configured enrichment concurrency, clamped to 1 or above."""
@@ -65,6 +72,7 @@ class ContentEnricher:
             BarColumn(),
             MofNCompleteColumn(),
             transient=True,
+            disable=not self.show_progress,
         ) as progress:
             task = progress.add_task("Enriching", total=len(items))
             coros = [
@@ -79,15 +87,20 @@ class ContentEnricher:
             List of dicts with keys: title, url, body
         """
         try:
-            # Suppress primp "Impersonate ... does not exist" stderr warning
-            stderr = sys.stderr
-            sys.stderr = open(os.devnull, "w")
-            try:
-                ddgs = DDGS()
-                results = await asyncio.to_thread(ddgs.text, query, max_results=max_results)
-            finally:
-                sys.stderr.close()
-                sys.stderr = stderr
+            ddgs = DDGS()
+            if self.search_semaphore is None:
+                results = await asyncio.to_thread(
+                    ddgs.text,
+                    query,
+                    max_results=max_results,
+                )
+            else:
+                async with self.search_semaphore:
+                    results = await asyncio.to_thread(
+                        ddgs.text,
+                        query,
+                        max_results=max_results,
+                    )
         except Exception:
             return []
 
@@ -122,8 +135,15 @@ class ContentEnricher:
         )
 
         try:
-            response = await self.client.complete(
-                system=CONCEPT_EXTRACTION_SYSTEM,
+            system_prompt = CONCEPT_EXTRACTION_SYSTEM
+            if self.domain_guidance:
+                system_prompt += (
+                    "\n\nDomain-specific enrichment guidance:\n"
+                    f"{self.domain_guidance}"
+                )
+            response = await self._complete(
+                self.client,
+                system=system_prompt,
                 user=user_prompt,
             )
             result = self._parse_json_response(response)
@@ -190,8 +210,15 @@ class ContentEnricher:
             web_context=web_context or "No web search results available.",
         )
 
-        response = await self.client.complete(
-            system=CONTENT_ENRICHMENT_SYSTEM,
+        system_prompt = CONTENT_ENRICHMENT_SYSTEM
+        if self.domain_guidance:
+            system_prompt += (
+                "\n\nDomain-specific enrichment guidance:\n"
+                f"{self.domain_guidance}"
+            )
+        response = await self._complete(
+            self.client,
+            system=system_prompt,
             user=user_prompt,
         )
 
@@ -245,7 +272,8 @@ class ContentEnricher:
         """Lightweight translation fallback: when full enrichment fails, at least
         translate the title and summary to Chinese so the item is not dropped."""
         try:
-            response = await self.translation_client.complete(
+            response = await self._complete(
+                self.translation_client,
                 system="You are a translator. Translate to Simplified Chinese. Return only valid JSON, no other text.",
                 user=(
                     f'Title: {item.title}\n'
@@ -262,3 +290,16 @@ class ContentEnricher:
                     item.metadata["detailed_summary_zh"] = result["summary_zh"]
         except Exception:
             pass
+
+    async def _complete(
+        self,
+        client: AIClient,
+        *,
+        system: str,
+        user: str,
+    ) -> str:
+        """Call an AI client while respecting the shared cross-domain budget."""
+        if self.semaphore is None:
+            return await client.complete(system=system, user=user)
+        async with self.semaphore:
+            return await client.complete(system=system, user=user)

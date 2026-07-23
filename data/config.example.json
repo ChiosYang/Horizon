@@ -9,6 +9,8 @@
     "throttle_sec": 0,
     "analysis_concurrency": 1,
     "enrichment_concurrency": 1,
+    "total_concurrency": 4,
+    "search_concurrency": 3,
     "stages": {}
   },
   "email": {
@@ -118,6 +120,35 @@
     "category_groups": {},
     "default_group": "other",
     "default_group_limit": null
+  },
+  "domain_concurrency": 3,
+  "domains": {
+    "ai": {
+      "name": "AI News",
+      "categories": ["ai-news", "ai-tools", "machine-learning", "llm"],
+      "score_threshold": 7.0,
+      "max_items": 10,
+      "analysis_guidance": "Prioritize model releases, research breakthroughs, infrastructure, and material product changes.",
+      "enrichment_guidance": "Explain benchmarks, model capabilities, technical tradeoffs, and ecosystem impact."
+    },
+    "economy": {
+      "name": "Economy",
+      "categories": ["economy", "finance", "equities", "crypto"],
+      "score_threshold": 7.0,
+      "max_items": 10
+    },
+    "entertainment": {
+      "name": "Entertainment",
+      "categories": ["entertainment", "movies", "music", "gaming"],
+      "score_threshold": 6.5,
+      "max_items": 8
+    },
+    "general": {
+      "name": "General News",
+      "categories": [],
+      "default": true,
+      "max_items": 10
+    }
   },
   "webhook": {
     "enabled": false,

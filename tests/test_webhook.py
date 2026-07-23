@@ -935,6 +935,32 @@ class TestSendDailySummary:
             assert item2_vars["item_url"] == "https://example.com/b"
         del os.environ[_TEST_URL_ENV]
 
+    def test_domain_summary_adds_domain_to_variables_and_titles(self):
+        config = WebhookConfig(
+            enabled=True,
+            url_env=_TEST_URL_ENV,
+            delivery="summary_and_items",
+        )
+        notifier = WebhookNotifier(config)
+
+        messages = notifier.build_daily_summary_messages(
+            summary="# AI News",
+            important_items=[_make_item()],
+            all_items_count=10,
+            date="2026-04-24",
+            lang="en",
+            summarizer=DailySummarizer(),
+            domain_name="AI News",
+        )
+
+        assert messages[0]["domain"] == "AI News"
+        assert (
+            messages[0]["message_title"]
+            == "Horizon AI News 2026-04-24 Overview"
+        )
+        assert messages[0]["summary"].startswith("# AI News - 2026-04-24")
+        assert messages[1]["message_title"].startswith("AI News 1/1")
+
     def test_summary_and_items_overview_last_sends_reversed_items_then_overview(self):
         """overview_position='last' keeps overview as newest chat message."""
         os.environ[_TEST_URL_ENV] = _TEST_URL
