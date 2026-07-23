@@ -46,6 +46,7 @@ data/mcp-secrets.json
 data/mcp-runs/
 data/metrics/*.json
 data/x_cookies_*.json
+data/config-backups/
 
 docs/_posts/*.md
 
