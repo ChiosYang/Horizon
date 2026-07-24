@@ -1,0 +1,234 @@
+:root {
+  color: #172321;
+  background: #f3f4ee;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  font-synthesis: none;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+  background:
+    radial-gradient(circle at 78% 12%, rgb(163 209 189 / 35%), transparent 28rem),
+    linear-gradient(145deg, #f9faf6, #eef0e8);
+}
+
+body::before {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background-image:
+    linear-gradient(rgb(26 75 67 / 5%) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(26 75 67 / 5%) 1px, transparent 1px);
+  background-size: 32px 32px;
+  content: "";
+  mask-image: linear-gradient(to bottom, black, transparent 72%);
+}
+
+.shell {
+  width: min(980px, calc(100% - 40px));
+  margin: 0 auto;
+  padding: 28px 0 48px;
+}
+
+.masthead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.brand {
+  display: inline-flex;
+  gap: 10px;
+  align-items: center;
+  color: inherit;
+  font-weight: 750;
+  letter-spacing: -0.02em;
+  text-decoration: none;
+}
+
+.brand-mark {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 11px;
+  color: white;
+  background: #145c50;
+  box-shadow: 0 8px 20px rgb(20 92 80 / 22%);
+}
+
+.language {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  color: #52615d;
+  font-size: 0.82rem;
+  font-weight: 650;
+}
+
+.language select {
+  min-height: 38px;
+  padding: 0 32px 0 12px;
+  border: 1px solid #c8d0ca;
+  border-radius: 10px;
+  color: #24332f;
+  background: rgb(255 255 255 / 76%);
+  font: inherit;
+}
+
+.language select:focus-visible {
+  outline: 3px solid rgb(33 128 111 / 24%);
+  outline-offset: 2px;
+}
+
+.hero {
+  max-width: 720px;
+  padding: clamp(80px, 14vw, 150px) 0 48px;
+}
+
+.eyebrow {
+  margin: 0 0 18px;
+  color: #16725f;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+h1 {
+  max-width: 690px;
+  margin: 0;
+  color: #142622;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(3rem, 7.6vw, 6.4rem);
+  font-weight: 500;
+  letter-spacing: -0.055em;
+  line-height: 0.92;
+}
+
+.intro {
+  max-width: 620px;
+  margin: 30px 0 0;
+  color: #596661;
+  font-size: clamp(1rem, 2vw, 1.2rem);
+  line-height: 1.7;
+}
+
+.status-card {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 20px;
+  align-items: center;
+  padding: 24px;
+  border: 1px solid rgb(75 105 96 / 20%);
+  border-radius: 20px;
+  background: rgb(255 255 255 / 72%);
+  box-shadow: 0 20px 60px rgb(31 63 56 / 9%);
+  backdrop-filter: blur(16px);
+}
+
+.status-card h2 {
+  margin: 0 0 5px;
+  font-size: 1rem;
+  letter-spacing: -0.01em;
+}
+
+.status-card p {
+  margin: 0;
+  color: #68736f;
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+
+.status-icon {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  border-radius: 14px;
+  color: #176c5c;
+  background: #dceee8;
+}
+
+.status-icon.failed {
+  color: #a13d35;
+  background: #f7e3df;
+}
+
+.status-marker {
+  font-size: 1.3rem;
+  font-weight: 800;
+}
+
+.spinner {
+  width: 19px;
+  height: 19px;
+  border: 2px solid rgb(23 108 92 / 22%);
+  border-top-color: #176c5c;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.privacy-note {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin: 20px 4px 0;
+  color: #71807b;
+  font-size: 0.76rem;
+}
+
+.privacy-note > span {
+  color: #4fa28e;
+  font-size: 0.55rem;
+}
+
+.privacy-note p {
+  margin: 0;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 620px) {
+  .shell {
+    width: min(100% - 28px, 980px);
+    padding-top: 18px;
+  }
+
+  .masthead {
+    align-items: flex-start;
+  }
+
+  .language {
+    align-items: flex-end;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .hero {
+    padding-top: 74px;
+  }
+
+  h1 {
+    font-size: clamp(2.8rem, 16vw, 4.6rem);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation-duration: 1.8s;
+  }
+}
